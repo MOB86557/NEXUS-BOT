@@ -1,0 +1,16 @@
+{
+  "adminId": "61590943816788",
+  "adminIds": [
+    "61586392203097"
+  ],
+  "memoryLimit": 10,
+  "conversationTimeout": 10,
+  "groupes": {
+    "solfare": "1292472036336193",
+    "niravil": "2568260903569086",
+    "murdak": "836548842335898"
+  },
+  "systemGroup": "1970196400432434",
+  "spyEnabled": false,
+  "cookies": []
+}
