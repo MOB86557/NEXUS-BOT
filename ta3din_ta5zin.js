@@ -14,6 +14,9 @@ const { sendReply, getKingdomByThreadId } = require('./utils');
 
 const COOLDOWN_MS = 20 * 60 * 1000;
 
+// ===== قفل مؤقت لمنع تنفيذ نفس النشاط مرتين بنفس اللحظة =====
+const activeActivityLocks = new Set();
+
 // ===== جداول الموارد =====
 
 const MURDAK_RESOURCES = [
@@ -77,66 +80,75 @@ async function handleActivity(api, event, { activityKey, resourceTable, actionNa
   const kingdom = getKingdomByThreadId(threadID);
   if (kingdom !== requiredKingdom) return;
 
-  const player = await getPlayer(senderID);
-  if (!player) {
-    await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
-    return;
-  }
+  // ===== قفل مؤقت لمنع تنفيذ نفس النشاط مرتين إذا وصل الأمر بنفس اللحظة =====
+  const lockKey = `${activityKey}:${senderID}`;
+  if (activeActivityLocks.has(lockKey)) return; // تجاهل صامت للطلب المكرر
+  activeActivityLocks.add(lockKey);
 
-  const now = Date.now();
-  const lastTime = player[activityKey] ? new Date(player[activityKey]).getTime() : 0;
-  const elapsed = now - lastTime;
+  try {
+    const player = await getPlayer(senderID);
+    if (!player) {
+      await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+      return;
+    }
 
-  const speedActive = player.speedBoost && new Date(player.speedBoost.expires).getTime() > now;
-  const effectiveCooldown = speedActive ? Math.floor(COOLDOWN_MS / 2) : COOLDOWN_MS;
+    const now = Date.now();
+    const lastTime = player[activityKey] ? new Date(player[activityKey]).getTime() : 0;
+    const elapsed = now - lastTime;
 
-  if (elapsed < effectiveCooldown) {
-    const remaining = effectiveCooldown - elapsed;
+    const speedActive = player.speedBoost && new Date(player.speedBoost.expires).getTime() > now;
+    const effectiveCooldown = speedActive ? Math.floor(COOLDOWN_MS / 2) : COOLDOWN_MS;
+
+    if (elapsed < effectiveCooldown) {
+      const remaining = effectiveCooldown - elapsed;
+      await sendReply(api,
+        `●─── ⟪ فشل ${actionName} ${failEmoji} ⟫ ───●\n❖ لايمكنك ${actionName} بعد\n❖ انتضر 🕐 : ${formatTimeRemaining(remaining)}\n●─────── ⌬ ───────●`,
+        messageID, threadID);
+      return;
+    }
+
+    const currentEP = player.ep ?? 1000;
+    if (currentEP < 20) {
+      await sendReply(api,
+        `●─── ⟪ فشل ${actionName} ${failEmoji} ⟫ ───●\n❖ طاقتك غير كافية\n❖ EP لديك : ${currentEP}/1000\n❖ تحتاج على الأقل 20 EP\n●─────── ⌬ ───────●`,
+        messageID, threadID);
+      return;
+    }
+
+    const result = rollResource(resourceTable);
+    const bag = player.bag || [];
+    const hasItem = bag.find(i => i.name === result.name && i.type === 'resource');
+    const capacity = getBagCapacity(player);
+
+    if (!hasItem && bag.length >= capacity) {
+      await sendReply(api,
+        `●─── ⟪ فشل ${actionName} ${failEmoji} ⟫ ───●\n❖ حقيبتك ممتلئة\n❖ احذف بعض الأغراض لتتمكن من ${actionName}\n●─────── ⌬ ───────●`,
+        messageID, threadID);
+      return;
+    }
+
+    await addItemToBag(String(senderID), result.name, result.quantity);
+
+    // 🆙 منح 5 XP لعملية الحفر أو الجمع أو الصيد الناجحة
+    await addXP(String(senderID), 5, api, threadID).catch(() => {});
+
+    let newEP = currentEP - 20;
+    let rageTriggered = false;
+    const nowActivity = Date.now();
+    if (newEP <= 0 && player.rageBoost && new Date(player.rageBoost.expires).getTime() > nowActivity) {
+      newEP = 100;
+      rageTriggered = true;
+    }
+
+    await updatePlayer(String(senderID), { [activityKey]: new Date(), ep: newEP });
+
+    const rageLine = rageTriggered ? `\n 🔥 خلطة الثور الغاضب فعّلت : EP → 100` : '';
     await sendReply(api,
-      `●─── ⟪ فشل ${actionName} ${failEmoji} ⟫ ───●\n❖ لايمكنك ${actionName} بعد\n❖ انتضر 🕐 : ${formatTimeRemaining(remaining)}\n●─────── ⌬ ───────●`,
+      `●─── ⟪ تم ${actionName} بنجاح ${actionEmoji} ⟫ ───●\n『 حصلت على  』↜ ┇ ${result.name}\n『 الكمية   』↜ ↜   ┇ ×${result.quantity}\n ✦ ${repeatVerb} مجددا بعد 20 دقيقة 🔄 ${actionEmoji}${rageLine}\n●─────── ⌬ ───────●`,
       messageID, threadID);
-    return;
+  } finally {
+    activeActivityLocks.delete(lockKey);
   }
-
-  const currentEP = player.ep ?? 1000;
-  if (currentEP < 20) {
-    await sendReply(api,
-      `●─── ⟪ فشل ${actionName} ${failEmoji} ⟫ ───●\n❖ طاقتك غير كافية\n❖ EP لديك : ${currentEP}/1000\n❖ تحتاج على الأقل 20 EP\n●─────── ⌬ ───────●`,
-      messageID, threadID);
-    return;
-  }
-
-  const result = rollResource(resourceTable);
-  const bag = player.bag || [];
-  const hasItem = bag.find(i => i.name === result.name && i.type === 'resource');
-  const capacity = getBagCapacity(player);
-
-  if (!hasItem && bag.length >= capacity) {
-    await sendReply(api,
-      `●─── ⟪ فشل ${actionName} ${failEmoji} ⟫ ───●\n❖ حقيبتك ممتلئة\n❖ احذف بعض الأغراض لتتمكن من ${actionName}\n●─────── ⌬ ───────●`,
-      messageID, threadID);
-    return;
-  }
-
-  await addItemToBag(String(senderID), result.name, result.quantity);
-  
-  // 🆙 منح 5 XP لعملية الحفر أو الجمع أو الصيد الناجحة
-  await addXP(String(senderID), 5, api, threadID).catch(() => {});
-
-  let newEP = currentEP - 20;
-  let rageTriggered = false;
-  const nowActivity = Date.now();
-  if (newEP <= 0 && player.rageBoost && new Date(player.rageBoost.expires).getTime() > nowActivity) {
-    newEP = 100;
-    rageTriggered = true;
-  }
-
-  await updatePlayer(String(senderID), { [activityKey]: new Date(), ep: newEP });
-
-  const rageLine = rageTriggered ? `\n 🔥 خلطة الثور الغاضب فعّلت : EP → 100` : '';
-  await sendReply(api,
-    `●─── ⟪ تم ${actionName} بنجاح ${actionEmoji} ⟫ ───●\n『 حصلت على  』↜ ┇ ${result.name}\n『 الكمية   』↜ ↜   ┇ ×${result.quantity}\n ✦ ${repeatVerb} مجددا بعد 20 دقيقة 🔄 ${actionEmoji}${rageLine}\n●─────── ⌬ ───────●`,
-    messageID, threadID);
 }
 
 async function handleHafr(api, event) {
