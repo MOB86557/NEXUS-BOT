@@ -501,35 +501,6 @@ async function handleAdminCommand(api, event) {
     return true;
   }
 
-  // --- أمر العقوبة (إضافة إنذار) ---
-  if (text === 'عقوبة') {
-    if (!event.messageReply) {
-      const { sendReply } = require('./utils');
-      await sendReply(api, `❌ يرجى الرد على رسالة اللاعب المستهدف لتطبيق العقوبة (إضافة إنذار).`, event.messageID, event.threadID);
-      return true;
-    }
-    const targetID = String(event.messageReply.senderID);
-    const { updatePlayer } = require('./database');
-    const { sendReply } = require('./utils');
-    const victimPlayer = await getPlayer(targetID);
-    if (!victimPlayer) {
-      await sendReply(api, `❌ هذا المستخدم غير مسجل في نظام نيكسوس.`, event.messageID, event.threadID);
-      return true;
-    }
-    const currentWarnings = (victimPlayer.warnings || 0) + 1;
-    await updatePlayer(targetID, { warnings: currentWarnings });
-    try {
-      const gid = config.groupes[victimPlayer.kingdom];
-      if (gid) {
-        const { changePlayerNickname } = require('./dukhul');
-        await changePlayerNickname(api, gid, targetID, victimPlayer.nickname, victimPlayer.rank || 'مجند', victimPlayer.class, currentWarnings);
-      }
-    } catch (e) {}
-    await sendReply(api, `⚠️ تم إضافة إنذار للاعب [${victimPlayer.nickname}].\nعدد الإنذارات الحالي: ${'🔴'.repeat(currentWarnings)}`, event.messageID, event.threadID);
-    await moderation.checkAndEnforceWarnings(api, targetID, victimPlayer.nickname, victimPlayer.kingdom, currentWarnings).catch(() => {});
-    return true;
-  }
-
   // --- أمر رتب الإدارة المخصص ---
   if (text === 'رتب الادارة' || text === 'رتب الإدارة') {
     const { handleRanksAlIdarah } = require('./ranks');
@@ -751,11 +722,13 @@ async function handleAdminCommand(api, event) {
     return true;
   }
 
-  if (text === 'بانكاي' || (event.messageReply && text === 'بانكاي')) { await moderation.handleBayaat(api, event, ''); return true; }
-  if (/^بانكاي\s+(.+)$/.test(text)) { await moderation.handleBayaat(api, event, text.replace(/^بانكاي\s+/, '')); return true; }
-  
+  // ⚠️ لازم فحص "بانكاي مؤبد" يكون قبل فحص "بانكاي" العادي
+  // لأن regex أمر "بانكاي" العادي كان يمسك "بانكاي مؤبد فلان" ويعتبر "مؤبد فلان" هو اسم الهدف
   if (text === 'بانكاي مؤبد' || (event.messageReply && text === 'بانكاي مؤبد')) { await moderation.handleBayaatMoabad(api, event, ''); return true; }
   if (/^بانكاي مؤبد\s+(.+)$/.test(text)) { await moderation.handleBayaatMoabad(api, event, text.replace(/^بانكاي مؤبد\s+/, '')); return true; }
+
+  if (text === 'بانكاي' || (event.messageReply && text === 'بانكاي')) { await moderation.handleBayaat(api, event, ''); return true; }
+  if (/^بانكاي\s+(.+)$/.test(text)) { await moderation.handleBayaat(api, event, text.replace(/^بانكاي\s+/, '')); return true; }
   
   if (text === 'طرد' || (event.messageReply && text === 'طرد')) { await moderation.handleBayaat(api, event, ''); return true; }
   if (/^طرد\s+(.+)$/.test(text)) { await moderation.handleBayaat(api, event, text.replace(/^طرد\s+/, '')); return true; }
