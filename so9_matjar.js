@@ -19,17 +19,17 @@ const { changePlayerNickname } = require('./dukhul');
 const SHOP_ITEMS = [
   {
     name: 'رخصة تغيير اللقب',
-    price: 100,
+    price: 350,
     description: 'تسمح بتغيير لقبك باللعبة'
   },
   {
     name: 'مسرع الزمن',
-    price: 15,
+    price: 300,
     description: 'يقلل مدة {الحفر / الجمع / الصيد } للنصف'
   },
   {
     name: 'رخصة إزالة الإنذار',
-    price: 300,
+    price: 900,
     description: 'تزيل إنذاراً واحداً من سجلك'
   }
 ];
