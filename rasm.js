@@ -4,53 +4,97 @@ const path = require('path');
 const os = require('os');
 const { H } = require('./utils');
 
-// ===== دالة تنزيل الصورة مع دعم كامل للـ redirect =====
+// دالة مساعدة لتنفيذ طلبات POST الخارجية بالاعتماد على وحدة https الأساسية لتجنب المكتبات الخارجية
+function postRequest(url, headers, body) {
+  return new Promise((resolve, reject) => {
+    try {
+      const urlObj = new URL(url);
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname + urlObj.search,
+        method: 'POST',
+        headers: {
+          ...headers,
+          'Content-Type': 'application/json'
+        },
+        timeout: 45000 // 45 ثانية كحد أقصى للطلب الواحد
+      };
+
+      const req = https.request(options, (res) => {
+        let data = '';
+        res.on('data', chunk => data += chunk);
+        res.on('end', () => {
+          resolve({ statusCode: res.statusCode, body: data });
+        });
+      });
+
+      req.on('error', (err) => {
+        reject(err);
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('timeout'));
+      });
+
+      req.write(JSON.stringify(body));
+      req.end();
+    } catch (e) {
+      reject(e);
+    }
+  });
+}
+
+// دالة تنزيل الصورة مع دعم كامل للـ redirect (تستخدم كاحتياط أخير فقط)
 function downloadImage(url, dest, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     if (redirectCount > 5) return reject(new Error('عدد إعادة التوجيه تجاوز الحد المسموح'));
 
-    const urlObj = new URL(url);
-    const options = {
-      hostname: urlObj.hostname,
-      path: urlObj.pathname + urlObj.search,
-      method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; NexusBot/1.0)',
-        'Accept': 'image/png,image/jpeg,image/*'
-      },
-      timeout: 90000
-    };
+    try {
+      const urlObj = new URL(url);
+      const options = {
+        hostname: urlObj.hostname,
+        path: urlObj.pathname + urlObj.search,
+        method: 'GET',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; NexusBot/1.0)',
+          'Accept': 'image/png,image/jpeg,image/*'
+        },
+        timeout: 45000
+      };
 
-    const req = https.request(options, (res) => {
-      // معالجة الـ redirect (301, 302, 307, 308)
-      if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
-        const newUrl = res.headers.location.startsWith('http')
-          ? res.headers.location
-          : `https://${urlObj.hostname}${res.headers.location}`;
-        res.resume();
-        return downloadImage(newUrl, dest, redirectCount + 1)
-          .then(resolve)
-          .catch(reject);
-      }
+      const req = https.request(options, (res) => {
+        if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
+          const newUrl = res.headers.location.startsWith('http')
+            ? res.headers.location
+            : `https://${urlObj.hostname}${res.headers.location}`;
+          res.resume();
+          return downloadImage(newUrl, dest, redirectCount + 1)
+            .then(resolve)
+            .catch(reject);
+        }
 
-      if (res.statusCode !== 200) {
-        res.resume();
-        return reject(new Error(`فشل تحميل الصورة: رمز الحالة ${res.statusCode}`));
-      }
+        if (res.statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`فشل تحميل الصورة: رمز الحالة ${res.statusCode}`));
+        }
 
-      const file = fs.createWriteStream(dest);
-      res.pipe(file);
-      file.on('finish', () => { file.close(); resolve(); });
-      file.on('error', (err) => { fs.unlink(dest, () => {}); reject(err); });
-    });
+        const file = fs.createWriteStream(dest);
+        res.pipe(file);
+        file.on('finish', () => { file.close(); resolve(); });
+        file.on('error', (err) => { fs.unlink(dest, () => {}); reject(err); });
+      });
 
-    req.on('error', reject);
-    req.on('timeout', () => {
-      req.destroy();
-      reject(new Error('انتهت مهلة الاتصال بخادم توليد الصور (90 ثانية)'));
-    });
+      req.on('error', reject);
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('انتهت مهلة الاتصال بخادم توليد الصور'));
+      });
 
-    req.end();
+      req.end();
+    } catch (e) {
+      reject(e);
+    }
   });
 }
 
@@ -68,7 +112,7 @@ const langMap = {
   'الايطالية': 'it', 'إيطالي': 'it', 'ايطالي': 'it', 'الايطاليه': 'it', 'it': 'it'
 };
 
-// دالة الترجمة (للأمر ترجمة فقط)
+// دالة الترجمة
 function translateText(text, targetLang = 'en') {
   return new Promise((resolve, reject) => {
     let langCode = targetLang.toLowerCase();
@@ -93,7 +137,7 @@ function translateText(text, targetLang = 'en') {
   });
 }
 
-// ===== 1. معالج أمر الرسم =====
+// ===== 1. معالج أمر الرسم بالتكامل مع قوقل ستوديو والتناوب التلقائي =====
 async function handleRasm(api, event) {
   const { threadID, senderID, messageID, body } = event;
   const text = (body || '').trim();
@@ -117,10 +161,107 @@ async function handleRasm(api, event) {
     threadID, () => {}, messageID
   );
 
-  // بناء رابط pollinations.ai مع النموذج flux (مجاني وسريع)
+  // جلب كافة المفاتيح من قاعدة البيانات
+  let keys = [];
+  try {
+    const db = require('./database').getDB();
+    keys = await db.collection('drawing_keys').find({}).toArray();
+  } catch (dbErr) {
+    console.error('[rasm] خطأ في جلب مفاتيح الرسم:', dbErr);
+  }
+
+  let imageBase64 = null;
+  let usedGoogle = false;
+
+  // محاولة توليد الصورة باستخدام مفاتيح جوجل المضافة بالتناوب
+  if (keys && keys.length > 0) {
+    for (let i = 0; i < keys.length; i++) {
+      const apiKey = keys[i].key;
+      try {
+        console.log(`[rasm] محاولة الرسم باستخدام مفتاح قوقل ستوديو رقم ${i + 1}`);
+
+        // المحاولة الأولى: نموذج Imagen 3
+        const urlImagen = `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:predict?key=${apiKey}`;
+        const bodyImagen = {
+          instances: [{ prompt: prompt }],
+          parameters: {
+            sampleCount: 1,
+            aspectRatio: "1:1",
+            outputMimeType: "image/png"
+          }
+        };
+
+        const resImagen = await postRequest(urlImagen, {}, bodyImagen);
+        if (resImagen.statusCode === 200) {
+          const resObj = JSON.parse(resImagen.body);
+          if (resObj.predictions && resObj.predictions.length > 0) {
+            imageBase64 = resObj.predictions[0].bytesBase64Encoded;
+            if (imageBase64) {
+              usedGoogle = true;
+              break; // تم النجاح بنجاح، نخرج من الحلقة
+            }
+          }
+        }
+
+        // المحاولة الثانية (الاحتياطية للمفتاح نفسه): نموذج Gemini Flash
+        console.log(`[rasm] لم يستجب نموذج Imagen للمفتاح رقم ${i + 1}، تجربة نموذج Gemini Flash الاحتياطي...`);
+        const urlGemini = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+        const bodyGemini = {
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseModalities: ["IMAGE"]
+          }
+        };
+
+        const resGemini = await postRequest(urlGemini, {}, bodyGemini);
+        if (resGemini.statusCode === 200) {
+          const resObj = JSON.parse(resGemini.body);
+          if (resObj.candidates && resObj.candidates[0]?.content?.parts) {
+            const parts = resObj.candidates[0].content.parts;
+            for (const part of parts) {
+              if (part.inlineData && part.inlineData.data) {
+                imageBase64 = part.inlineData.data;
+                break;
+              }
+            }
+            if (imageBase64) {
+              usedGoogle = true;
+              break; // تم النجاح بنجاح، نخرج من الحلقة
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`[rasm] فشل استخدام مفتاح الرسم رقم ${i + 1}:`, err.message);
+      }
+    }
+  }
+
+  const tempFile = path.join(os.tmpdir(), `draw_${Date.now()}.png`);
+
+  if (usedGoogle && imageBase64) {
+    try {
+      const buffer = Buffer.from(imageBase64, 'base64');
+      fs.writeFileSync(tempFile, buffer);
+
+      const msg = {
+        body: '',
+        attachment: fs.createReadStream(tempFile)
+      };
+
+      api.sendMessage(msg, threadID, (err) => {
+        try { fs.unlinkSync(tempFile); } catch (_) {}
+        if (err) console.error('[rasm] خطأ في إرسال الصورة:', err);
+      }, messageID);
+      return true;
+    } catch (saveErr) {
+      console.error('[rasm] خطأ في معالجة وحفظ صورة قوقل:', saveErr);
+    }
+  }
+
+  // في حال لم تتوفر مفاتيح، أو انتهت صلاحية جميع مفاتيح قوقل ستوديو، يتم التراجع الاحتياطي لـ pollinations بشكل مغلف لمنع الكراش
+  console.log('[rasm] جاري تفعيل التراجع الاحتياطي لتفادي توقف البوت...');
   const seed = Math.floor(Math.random() * 1000000);
   const imageUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?model=flux&width=1024&height=1024&nologo=true&seed=${seed}&enhance=false`;
-  const tempFile = path.join(os.tmpdir(), `draw_${Date.now()}.png`);
 
   try {
     await downloadImage(imageUrl, tempFile);
@@ -132,14 +273,14 @@ async function handleRasm(api, event) {
 
     api.sendMessage(msg, threadID, (err) => {
       try { fs.unlinkSync(tempFile); } catch (_) {}
-      if (err) console.error('[rasm] خطأ في إرسال الصورة:', err);
+      if (err) console.error('[rasm] خطأ في إرسال صورة التراجع الاحتياطي:', err);
     }, messageID);
 
   } catch (error) {
-    console.error('[rasm] خطأ في توليد الصورة:', error.message);
+    console.error('[rasm] خطأ شامل: فشل قوقل ستوديو والمحاولة الاحتياطية:', error.message);
     api.setMessageReaction('❌', messageID, () => {}, true);
     api.sendMessage(
-      { body: H + `❌ عذراً، حدث خطأ أثناء توليد الصورة.\nالسبب: ${error.message}\nيرجى المحاولة مرة أخرى لاحقاً.` },
+      { body: H + `❌ عذراً، تعذر توليد الصورة حالياً.\nالسبب: تعطلت جميع مفاتيح قوقل ستوديو المضافة مع توقف السيرفر الاحتياطي.\nيرجى مراجعة "مفاتيح رسم" في لوحة التحكم الإمبراطورية.` },
       threadID, () => {}, messageID
     );
     try { fs.unlinkSync(tempFile); } catch (_) {}
