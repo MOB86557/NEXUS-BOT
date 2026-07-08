@@ -422,10 +422,21 @@ async function handleAdminReviewCommand(api, event) {
   const submission = await db.collection('interaction_submissions').findOne({ status: 'pending' });
   if (!submission) return;
 
-  const msgText = 
+  // جلب الاسم الحقيقي من فيسبوك بدلاً من الاعتماد على القيمة المخزّنة
+  let realName = submission.playerName || '—';
+  try {
+    const userInfo = await new Promise((resolve) => {
+      api.getUserInfo(String(submission.fbId), (err, info) => {
+        resolve(err || !info ? null : (info[String(submission.fbId)] || null));
+      });
+    });
+    if (userInfo && userInfo.name) realName = userInfo.name;
+  } catch (e) {}
+
+  const msgText =
     `الطلبات المتبقية : ${pendingCount}\n` +
     `لقب اللاعب : ${submission.playerNickname}\n` +
-    `اسم حسابه : ${submission.playerName}\n` +
+    `اسم حسابه : ${realName}\n` +
     `رابط المنشور : ${submission.postLink}`;
 
   const info = await sendSubmissionToAdmin(api, threadID, msgText, submission.screenshotUrl);
