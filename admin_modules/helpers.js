@@ -52,39 +52,6 @@ async function kickFromAllGroups(api, fbId) {
   }
 }
 
-// طرد اللاعب من كل القروبات (كل العواصم + كل المدن) ما عدا مدينته/عاصمته الأصلية
-// تُستخدم عند تنزيل رتبة لاعب حصرية (امبراطور/حاكم/نائب حاكم/جنرال/قائد) لرتبة مجند بعد استبداله
-async function kickFromGroupsExceptOwnCity(api, fbId, kingdom, registeredCityName) {
-  const { getDB } = require('../database');
-  const db = getDB();
-
-  // تحديد القروب المستثنى (مدينته الأصلية، أو عاصمة مملكته إن لم تكن له مدينة محددة)
-  let keepThreadId = null;
-  try {
-    if (registeredCityName && registeredCityName !== 'العاصمة') {
-      const cityDoc = await db.collection('cities').findOne({ kingdom, name: registeredCityName });
-      keepThreadId = cityDoc ? String(cityDoc.threadId) : (config.groupes[kingdom] ? String(config.groupes[kingdom]) : null);
-    } else {
-      keepThreadId = config.groupes[kingdom] ? String(config.groupes[kingdom]) : null;
-    }
-  } catch (e) {
-    keepThreadId = config.groupes[kingdom] ? String(config.groupes[kingdom]) : null;
-  }
-
-  // كل القروبات الموجودة بالنظام: العواصم الثلاث + كل المدن بكل الممالك
-  const allCapitals = Object.values(config.groupes).map(String);
-  let allCityIds = [];
-  try {
-    allCityIds = (await db.collection('cities').find({}).toArray()).map(c => String(c.threadId));
-  } catch (e) {}
-  const allGroupIds = [...new Set([...allCapitals, ...allCityIds])];
-
-  for (const gid of allGroupIds) {
-    if (gid === keepThreadId) continue;
-    await kickUser(api, fbId, gid);
-  }
-}
-
 async function resolveTarget(text, event) {
   if (event && event.messageReply && (!text || text.trim() === '')) {
     const targetId = String(event.messageReply.senderID);
@@ -105,6 +72,5 @@ module.exports = {
   kickUser,
   addUserToGroup,
   kickFromAllGroups,
-  kickFromGroupsExceptOwnCity,
   resolveTarget
 };
