@@ -6,6 +6,34 @@ const {
 const { getPlayer, updatePlayer, getAdminSession, deleteAdminSession, setAdminSession } = require('./database');
 const { RANKS_ORDER, checkManualRankLimits } = require('./ranks');
 const { notifyAdmins } = require('./musa3idat');
+const groupsHandlers = require('./admin_modules/groups');
+
+// خريطة توزيع حالات الجلسات الخاصة بلوحة التحكم (groups.js) على دوالها الصحيحة
+const GROUPS_SESSION_STATE_MAP = {
+  'DATA_MAIN': 'handleDataSession',
+  'DATA_AWAIT_NAME': 'handleDataSession',
+  'DATA_AWAIT_PHOTO': 'handleDataSession',
+  'DATA_AWAIT_BOT_NICK': 'handleDataSession',
+  'RESET_MAIN': 'handleEadatDabtSession',
+  'QAROBAAT_MAIN': 'handleQarobaatSession',
+  'QAROBAAT_EDIT_SELECT': 'handleQarobaatSession',
+  'QAROBAAT_EDIT_AWAIT_ID': 'handleQarobaatSession',
+  'IDAFA_MAIN': 'handleIdafaSession',
+  'CITIES_MAIN': 'handleCitiesSession',
+  'CITIES_ADD_KINGDOM': 'handleCitiesSession',
+  'CITIES_ADD_AWAIT_NAME': 'handleCitiesSession',
+  'CITIES_ADD_AWAIT_GROUP_NAME': 'handleCitiesSession',
+  'CITIES_ADD_AWAIT_THREAD_ID': 'handleCitiesSession',
+  'CITIES_EDIT_SELECT': 'handleCitiesSession',
+  'CITIES_EDIT_MAIN': 'handleCitiesSession',
+  'CITIES_EDIT_AWAIT_NAME': 'handleCitiesSession',
+  'CITIES_EDIT_AWAIT_GROUP_NAME': 'handleCitiesSession',
+  'CITIES_EDIT_AWAIT_THREAD_ID': 'handleCitiesSession',
+  'CITIES_DELETE_SELECT': 'handleCitiesSession',
+  'BOT_GROUPS_MAIN': 'handleBotGroupsSession',
+  'MSG_REQS_MAIN': 'handleMessageRequestsSession',
+  'MSG_REQS_ACTION': 'handleMessageRequestsSession'
+};
 
 global.lastMuteTitleCheck = global.lastMuteTitleCheck || {};
 
@@ -383,6 +411,21 @@ async function handleAdminGroup(api, event) {
 async function handleAdminSessionState(api, event, adminSession) {
   const { senderID, threadID } = event;
   const text = (event.body || '').trim();
+
+  // ─── توزيع حالات جلسات لوحة تحكم القروبات (groups.js) ───
+  // هذه الحالات (RESET_MAIN, DATA_MAIN, CITIES_*, QAROBAAT_*, IDAFA_MAIN, BOT_GROUPS_MAIN, MSG_REQS_*)
+  // يتم ضبطها عبر setAdminSession من داخل groups.js، لذا يجب توجيهها هنا لدوالها الصحيحة
+  // وإلا ستُفقد الاستجابة بالكامل عند إرسال المستخدم لأي رقم أو نص تالٍ.
+  const groupsHandlerName = GROUPS_SESSION_STATE_MAP[adminSession.state];
+  if (groupsHandlerName) {
+    const fn = groupsHandlers[groupsHandlerName];
+    if (typeof fn === 'function') {
+      await fn(api, event, adminSession);
+    } else {
+      console.error(`[Admin Session Router] دالة غير موجودة في groups.js: ${groupsHandlerName}`);
+    }
+    return true;
+  }
 
   if (adminSession.state === 'AWAITING_IGNORE_DURATION') {
     if (text === 'خروج') {
