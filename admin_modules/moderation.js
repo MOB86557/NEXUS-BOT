@@ -172,6 +172,8 @@ async function handleUnmuteAll(api, event) {
 async function handleMa3loomat(api, event, args) {
   const { threadID, senderID } = event;
   if (args && args.trim()) { await showPlayerInfo(api, event, args.trim()); return; }
+  // إذا كان الأمر رداً على رسالة لاعب، اعرض معلوماته مباشرة
+  if (event.messageReply && event.messageReply.senderID) { await showPlayerInfo(api, event, ''); return; }
   await setAdminSession(senderID, { state: 'MA3LOOMAT_MAIN' });
   await sendMessage(api,
     `╮───∙⋆⋅「 معلومات 」\n│\n│ › اختر المملكة :\n│ 1 › سولفارا\n│ 2 › نيرافيل\n│ 3 › مورداك\n│\n│ › او ارسل لقب لاعب\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
@@ -200,16 +202,39 @@ async function showKingdomPlayers(api, event, kingdom) {
 
 async function showPlayerInfo(api, event, query) {
   const { threadID } = event;
-  const { player } = await resolveTarget(query, null);
-  if (!player) { await sendMessage(api, `⚠️ لم يتم العثور على اللاعب : ${query}`, threadID); return; }
+  const { player, fbId } = await resolveTarget(query, event);
+  if (!player) { await sendMessage(api, `⚠️ لم يتم العثور على اللاعب : ${query || 'المستهدف'}`, threadID); return; }
+
+  // جلب اسم حساب الفيسبوك
+  let fbName = '—';
+  try {
+    const userInfo = await new Promise((resolve) => {
+      api.getUserInfo(String(player.fbId), (err, info) => {
+        resolve(err || !info ? null : (info[String(player.fbId)] || null));
+      });
+    });
+    if (userInfo && userInfo.name) fbName = userInfo.name;
+  } catch (e) {}
+
+  // جلب لقب من دعاه إن كان مسجلاً
+  let inviterText = 'لا أحد';
+  if (player.invitedBy) {
+    try {
+      const inviter = await getPlayer(String(player.invitedBy));
+      inviterText = inviter && inviter.nickname
+        ? `${player.invitedBy} (${inviter.nickname})`
+        : String(player.invitedBy);
+    } catch (e) { inviterText = String(player.invitedBy); }
+  }
+
   const sym = classSymbols[player.class] || '✹';
   const bag = (player.bag || []).map(i => `${i.name} x${i.quantity}`).join(', ') || 'فارغة';
   await sendMessage(api,
     `╮───────∙⋆⋅ ※ ⋅⋆∙───────╭\n  ✦ ملف اللاعب - أدمن ✦\n╯───────∙⋆⋅ ※ ⋅⋆∙───────╰\n\n` +
-    `╮───∙⋆⋅「 البيانات 」\n│ › اللقب    : ${player.nickname}\n│ › المملكة  : ${kingdomNamesAr[player.kingdom] || player.kingdom}\n│ › الفئة    : ${player.class} ${sym}\n│ › الرتبة   : ${player.rank || 'مجند'}\n│ › المستوى  : ${player.level || 1}\n╯───────∙⋆⋅ ※ ⋅⋆∙\n\n` +
-    `╮───∙⋆⋅「 الإحصائيات 」\n│ › HP : ${player.hp || 1000}\n│ › EP : ${player.ep || 1000}\n│ › الكوينز : ${player.coins || 0}\n│ › الايدي  : ${player.fbId}\n╯───────∙⋆⋅ ※ ⋅⋆∙\n\n` +
+    `╮───∙⋆⋅「 البيانات 」\n│ › اللقب     : ${player.nickname}\n│ › اسم الفيس : ${fbName}\n│ › المملكة   : ${kingdomNamesAr[player.kingdom] || player.kingdom}\n│ › الفئة     : ${player.class} ${sym}\n│ › الرتبة    : ${player.rank || 'مجند'}\n│ › المستوى   : ${player.level || 1}\n╯───────∙⋆⋅ ※ ⋅⋆∙\n\n` +
+    `╮───∙⋆⋅「 الإحصائيات 」\n│ › HP          : ${player.hp || 1000}\n│ › EP          : ${player.ep || 1000}\n│ › الكوينز    : ${player.coins || 0}\n│ › رصيد البنك : ${player.bankBalance || 0}\n│ › الايدي     : ${player.fbId}\n╯───────∙⋆⋅ ※ ⋅⋆∙\n\n` +
     `╮───∙⋆⋅「 الحقيبة 」\n│ › ${bag}\n╯───────∙⋆⋅ ※ ⋅⋆∙\n\n` +
-    `╮───∙⋆⋅「 أخرى 」\n│ › دعاه : ${player.invitedBy || 'لا أحد'}\n│ › التسجيل : ${player.registeredAt ? new Date(player.registeredAt).toLocaleDateString('ar') : 'غير محدد'}\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
+    `╮───∙⋆⋅「 أخرى 」\n│ › دعاه    : ${inviterText}\n│ › التسجيل : ${player.registeredAt ? new Date(player.registeredAt).toLocaleDateString('ar') : 'غير محدد'}\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
     threadID);
 }
 
