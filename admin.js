@@ -7,10 +7,12 @@
  *  - تجميع الوحدات المفككة من مجلد admin_modules وإدارة الجلسات بشكل منظم.
  *  - تمكين وتسهيل عمل البوت للأدمن في المحادثات الخاصة بشكل عادي.
  *  - تمكين وضع الصمت الكامل، التقمص الذكي، إزالة الإنذارات، ورتب الإدارة.
+ *
+ *  ملاحظة: تم تفكيك هذا الملف بالكامل — كل ميزة أصبحت بملفها الخاص داخل
+ *  admin_modules/ لتسهيل الصيانة. هذا الملف أصبح مجرد موجّه (Router) خفيف.
  * ═══════════════════════════════════════════════════════════════════════
  */
 
-const fs = require('fs');
 const config = require('./config.json');
 
 // استيراد الوحدات المفككة
@@ -27,365 +29,17 @@ const database = require('./admin_modules/database');
 const files = require('./admin_modules/files');
 const interactionCoins = require('./interaction_coins');
 
+// الميزات المستخرجة حديثاً (كل ميزة بملفها الخاص)
+const menu = require('./admin_modules/menu');
+const commandMgmt = require('./admin_modules/command_mgmt');
+const drawKeys = require('./admin_modules/draw_keys');
+const tasks = require('./admin_modules/tasks');
+const impersonation = require('./admin_modules/impersonation');
+
 const { sendMessage } = require('./utils');
-// تم استيراد setAdminSession هنا لحل مشكلة كراش الأمر
 const { getAdminSession, setAdminSession, deleteAdminSession, getPermanentBan, setBotConfig, getPlayer } = require('./database');
 const { markBotDeleted, setSpyEnabled, isSpyEnabled } = require('./spy_group');
 const { setResponseDelay, getResponseDelay } = require('./settings');
-
-// دالة مساعدة لعمل escape لنصوص البحث
-function escapeRegex(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-// ═════════════════════════════════════════════════════════════════════
-//   القائمة الرئيسية (لوحة تحكم الامبراطور)
-// ═════════════════════════════════════════════════════════════════════
-
-async function handleAdminMenu(api, event) {
-  const msg =
-    `╗═════━━━❖━━━═════╔\n` +
-    `            لوحة تحكم الامبراطور       \n` +
-    `╝═════━━━❖━━━═════╚\n` +
-    `❖ بيانات \n` +
-    `❖ معلومات \n` +
-    `❖ بانكاي\n` +
-    `❖ بانكاي مؤبد\n` +
-    `❖ حذف\n` +
-    `❖ الحظر\n` +
-    `❖ اشعار \n` +
-    `❖ اضافة مهام \n` +
-    `❖ تجاهل / فك التجاهل \n` +
-    `❖ ازالة الانذارات \n` +
-    `❖ تقمص / الغاء التقمص \n` +
-    `❖  رتب الادارة \n` +
-    `❖ صمت هنا\n` +
-    `❖ صمت الكل\n` +
-    `❖ فك الصمت هنا\n` +
-    `❖ فك الصمت الكل\n` +
-    `❖ اعدادات كوينز التفاعل\n` +
-    `❖ تفاعلات\n` +
-    `❖ مفاتيح رسم\n` +
-    `━━━━━━━━━━━━━━━━━━\n` +
-    `❖ المشرفون\n` +
-    `❖ ريست \n` +
-    `❖ ملفات\n` +
-    `❖ ايقاف البوت / تشغيل البوت\n` +
-    `❖ تأخير \n` +
-    `❖ تعديل\n` +
-    `❖ تعطيل / تشغيل \n` +
-    `❖ مسح\n` +
-    `❖ جاسوس\n` +
-    `❖ ضبط الاوامر \n` +
-    `❖ البوتات \n` +
-    `❖ تبديل \n` +
-    `❖ اعادة ضبط \n` +
-    `❖ الحماية \n` +
-    `❖ قاعدة البيانات \n` +
-    `❖ طلبات المراسلة \n` +
-    `❖ القروبات\n` +
-    `❖ قروبات البوت \n` +
-    `❖ اضافة \n` +
-    `❖ ايدي / ايدي القروب\n` +
-    `━━━━━━━━━━━━━━━━\n` +
-    `❖ اعدادات قول \n` +
-    `❖ منشورات\n` +
-    `❖ الوكلاء / ذاكرة`;
-  await sendMessage(api, msg, event.threadID);
-}
-
-// ═════════════════════════════════════════════════════════════════════
-//   منح صلاحيات الأدمن
-// ═════════════════════════════════════════════════════════════════════
-
-async function handleAdminGranted(api, event) {
-  try {
-    await sendMessage(api,
-      `╗═════━━━━━═════╔\n ┇            𝑨𝑫𝑴𝑰𝑵 ☑            ┇  \n╝═════━━━━━═════╚`,
-      event.threadID);
-  } catch (e) {}
-}
-
-// ═════════════════════════════════════════════════════════════════════
-//   منظم وجلسة التحكم بالأوامر للمطور
-// ═════════════════════════════════════════════════════════════════════
-async function handleCommandMgmtSession(api, event, session) {
-  const { senderID, body } = event;
-  const text = (body || '').trim();
-  const s = session.state;
-
-  const { deleteAdminSession, setAdminSession, getCustomCommands, saveCustomCommands } = require('./database');
-  const { DEFAULT_COMMANDS, fetchCommandsList } = require('./awamer');
-
-  if (text === 'خروج') {
-    await deleteAdminSession(senderID);
-    await sendMessage(api, `╮───∙⋆⋅「 تم الخروج 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.threadID);
-    return;
-  }
-
-  const currentCommands = await fetchCommandsList();
-
-  if (s === 'CMD_MGMT_MAIN') {
-    if (text === '1') {
-      await setAdminSession(senderID, { state: 'CMD_MGMT_ADD_TYPE' });
-      await sendMessage(api, `╮───∙⋆⋅「 إضافة أمر 」\n│ اختر نوع الأمر:\n│ 1 》 أمر عادي (مفتوح للجميع)\n│ 2 》 أمر مقفول بمفتاح متجر\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.threadID);
-      return;
-    }
-    if (text === '2') {
-      await setAdminSession(senderID, { state: 'CMD_MGMT_EDIT_SELECT' });
-      let listMsg = `╮───∙⋆⋅「 تعديل أمر 」\nالرجاء إدخال رقم الأمر الذي ترغب في تعديله:\n`;
-      currentCommands.forEach((cmd, idx) => {
-        listMsg += `│ ${idx + 1}. ${cmd.text} ${cmd.key ? '(🔒 بمفتاح)' : ''}\n`;
-      });
-      listMsg += `╯───────∙⋆⋅ ※ ⋅⋆∙\n› أدخل الرقم المطلوب أو "خروج"`;
-      await sendMessage(api, listMsg, event.threadID);
-      return;
-    }
-    if (text === '3') {
-      await setAdminSession(senderID, { state: 'CMD_MGMT_DELETE_SELECT' });
-      let listMsg = `╮───∙⋆⋅「 حذف أمر 」\nالرجاء إدخال رقم الأمر الذي ترغب بحذفه:\n`;
-      currentCommands.forEach((cmd, idx) => {
-        listMsg += `│ ${idx + 1}. ${cmd.text}\n`;
-      });
-      listMsg += `╯───────∙⋆⋅ ※ ⋅⋆∙\n› أدخل الرقم المطلوب أو "خروج"`;
-      await sendMessage(api, listMsg, event.threadID);
-      return;
-    }
-    if (text === '4') {
-      await setAdminSession(senderID, { state: 'CMD_MGMT_REORDER_SELECT' });
-      let listMsg = `╮───∙⋆⋅「 ترتيب الأوامر 」\nالرجاء إدخال رقم الأمر الذي ترغب في تغيير مكانه:\n`;
-      currentCommands.forEach((cmd, idx) => {
-        listMsg += `│ ${idx + 1}. ${cmd.text}\n`;
-      });
-      listMsg += `╯───────∙⋆⋅ ※ ⋅⋆∙\n› أدخل الرقم المطلوب أو "خروج"`;
-      await sendMessage(api, listMsg, event.threadID);
-      return;
-    }
-    if (text === '5') {
-      let listMsg = `╮───∙⋆⋅「 قائمة الأوامر الحالية 」\n`;
-      currentCommands.forEach((cmd, idx) => {
-        listMsg += `│ ${idx + 1}. ${cmd.text} ${cmd.key ? `[قفل: ${cmd.key}]` : ''}\n`;
-      });
-      listMsg += `╯───────∙⋆⋅ ※ ⋅⋆∙`;
-      await sendMessage(api, listMsg, event.threadID);
-      await setAdminSession(senderID, { state: 'CMD_MGMT_MAIN' });
-      return;
-    }
-    if (text === '6') {
-      await saveCustomCommands(DEFAULT_COMMANDS);
-      await sendMessage(api, `✅ تم إعادة ضبط قائمة الأوامر للوضع الافتراضي بنجاح!`, event.threadID);
-      await deleteAdminSession(senderID);
-      return;
-    }
-
-    await sendMessage(api, `⚠️ خيار غير صحيح. الرجاء إدخال رقم من 1 إلى 6 أو 《 خروج 》.`, event.threadID);
-    return;
-  }
-
-  // --- إضافة أمر جديد ---
-  if (s === 'CMD_MGMT_ADD_TYPE') {
-    if (text === '1') {
-      await setAdminSession(senderID, { state: 'CMD_MGMT_ADD_TEXT', isLocked: false });
-      await sendMessage(api, `الرجاء إدخال نص الأمر مع الوصف (مثال: ➤ اسم الأمر ┇ الوصف):`, event.threadID);
-      return;
-    }
-    if (text === '2') {
-      await setAdminSession(senderID, { state: 'CMD_MGMT_ADD_TEXT', isLocked: true });
-      await sendMessage(api, `الرجاء إدخال نص الأمر في حالة فك القفل (مثال: ➤ ترجمة ┇ لترجمة النصوص):`, event.threadID);
-      return;
-    }
-    await sendMessage(api, `⚠️ خيار غير صحيح. اختر 1 أو 2.`, event.threadID);
-    return;
-  }
-
-  if (s === 'CMD_MGMT_ADD_TEXT') {
-    const isLocked = session.isLocked;
-    if (isLocked) {
-      await setAdminSession(senderID, { state: 'CMD_MGMT_ADD_LOCKED_TEXT', isLocked, textValue: text });
-      await sendMessage(api, `الرجاء إدخال نص الأمر في حالة القفل (مثال: ➤ 🔒 ترجمة ┇ لترجمة النصوص):`, event.threadID);
-    } else {
-      const newCmd = { text, kingdoms: [] };
-      currentCommands.push(newCmd);
-      await saveCustomCommands(currentCommands);
-      await sendMessage(api, `✅ تم إضافة الأمر العادي الجديد بنجاح!`, event.threadID);
-      await deleteAdminSession(senderID);
-    }
-    return;
-  }
-
-  if (s === 'CMD_MGMT_ADD_LOCKED_TEXT') {
-    await setAdminSession(senderID, { state: 'CMD_MGMT_ADD_KEY', textValue: session.textValue, lockedTextValue: text });
-    await sendMessage(api, `الرجاء إدخال اسم مفتاح المتجر الدقيق المرتبط بهذا الأمر (مثال: مفتاح أمر ترجمة):`, event.threadID);
-    return;
-  }
-
-  if (s === 'CMD_MGMT_ADD_KEY') {
-    const newCmd = {
-      key: text,
-      text: session.textValue,
-      lockedText: session.lockedTextValue,
-      kingdoms: []
-    };
-    currentCommands.push(newCmd);
-    await saveCustomCommands(currentCommands);
-    await sendMessage(api, `✅ تم إضافة الأمر المقفول الجديد بنجاح!`, event.threadID);
-    await deleteAdminSession(senderID);
-    return;
-  }
-
-  // --- تعديل أمر ---
-  if (s === 'CMD_MGMT_EDIT_SELECT') {
-    const idx = parseInt(text, 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= currentCommands.length) {
-      await sendMessage(api, `⚠️ رقم غير صحيح. اختر من القائمة المتاحة.`, event.threadID);
-      return;
-    }
-    const targetCmd = currentCommands[idx];
-    await setAdminSession(senderID, { state: 'CMD_MGMT_EDIT_VALUE', editIndex: idx });
-    await sendMessage(api, `╮───∙⋆⋅「 تعديل أمر 」\n│ النص الحالي: ${targetCmd.text}\n│ أدخل النص والوصف الجديد بالكامل:\n╯───────∙⋆┌ ※ ┐`, event.threadID);
-    return;
-  }
-
-  if (s === 'CMD_MGMT_EDIT_VALUE') {
-    const idx = session.editIndex;
-    currentCommands[idx].text = text;
-    if (currentCommands[idx].key) {
-      currentCommands[idx].lockedText = `➤ 🔒 ${text.replace(/^➤\s*/, '')}`;
-    }
-    await saveCustomCommands(currentCommands);
-    await sendMessage(api, `✅ تم تعديل الأمر بنجاح!`, event.threadID);
-    await deleteAdminSession(senderID);
-    return;
-  }
-
-  // --- حذف أمر ---
-  if (s === 'CMD_MGMT_DELETE_SELECT') {
-    const idx = parseInt(text, 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= currentCommands.length) {
-      await sendMessage(api, `⚠️ رقم غير صحيح. اختر من القائمة المتاحة.`, event.threadID);
-      return;
-    }
-    const deleted = currentCommands.splice(idx, 1);
-    await saveCustomCommands(currentCommands);
-    await sendMessage(api, `✅ تم حذف الأمر (${deleted[0].text}) بنجاح!`, event.threadID);
-    await deleteAdminSession(senderID);
-    return;
-  }
-
-  // --- ترتيب الأوامر ---
-  if (s === 'CMD_MGMT_REORDER_SELECT') {
-    const idx = parseInt(text, 10) - 1;
-    if (isNaN(idx) || idx < 0 || idx >= currentCommands.length) {
-      await sendMessage(api, `⚠️ رقم غير صحيح. اختر من القائمة المتاحة.`, event.threadID);
-      return;
-    }
-    await setAdminSession(senderID, { state: 'CMD_MGMT_REORDER_DEST', fromIndex: idx });
-    await sendMessage(api, `الأمر المختار هو: (${currentCommands[idx].text})\nأدخل الرقم الموضع الجديد الذي ترغب بنقل الأمر إليه (1 إلى ${currentCommands.length}):`, event.threadID);
-    return;
-  }
-
-  if (s === 'CMD_MGMT_REORDER_DEST') {
-    const fromIdx = session.fromIndex;
-    const toIdx = parseInt(text, 10) - 1;
-    if (isNaN(toIdx) || toIdx < 0 || toIdx >= currentCommands.length) {
-      await sendMessage(api, `⚠️ موضع غير صحيح. الرجاء الإدخال من 1 إلى ${currentCommands.length}.`, event.threadID);
-      return;
-    }
-    const [item] = currentCommands.splice(fromIdx, 1);
-    currentCommands.splice(toIdx, 0, item);
-    await saveCustomCommands(currentCommands);
-    await sendMessage(api, `✅ تم تغيير ترتيب الأمر بنجاح!`, event.threadID);
-    await deleteAdminSession(senderID);
-    return;
-  }
-}
-
-// ═════════════════════════════════════════════════════════════════════
-//   جلسة إدارة مفاتيح الرسم
-// ═════════════════════════════════════════════════════════════════════
-async function handleDrawKeysSession(api, event, session) {
-  const { senderID, body } = event;
-  const text = (body || '').trim();
-  const s = session.state;
-  const db = require('./database').getDB();
-
-  if (text === 'خروج') {
-    await deleteAdminSession(senderID);
-    await sendMessage(api, `╮───∙⋆⋅「 تم الخروج 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.threadID);
-    return;
-  }
-
-  if (s === 'DRAW_KEYS_MAIN') {
-    if (text === '1') {
-      const keys = await db.collection('drawing_keys').find({}).toArray();
-      if (keys.length === 0) {
-        await sendMessage(api, `⚠️ لا توجد أي مفاتيح رسم مضافة حالياً.`, event.threadID);
-      } else {
-        let msg = `╮───∙⋆⋅「 🎨 مفاتيح الرسم المضافة 」\n`;
-        keys.forEach((k, idx) => {
-          msg += `│ ${idx + 1}. ${k.key.substring(0, 8)}...${k.key.substring(k.key.length - 4)}\n`;
-        });
-        msg += `╯───────∙⋆⋅ ※ ⋅⋆∙`;
-        await sendMessage(api, msg, event.threadID);
-      }
-      await setAdminSession(senderID, { state: 'DRAW_KEYS_MAIN' });
-      return;
-    }
-    if (text === '2') {
-      await setAdminSession(senderID, { state: 'DRAW_KEYS_ADD' });
-      await sendMessage(api, `يرجى إرسال مفتاح Google AI Studio الجديد المراد إضافته:`, event.threadID);
-      return;
-    }
-    if (text === '3') {
-      const keys = await db.collection('drawing_keys').find({}).toArray();
-      if (keys.length === 0) {
-        await sendMessage(api, `⚠️ لا توجد مفاتيح لحذفها.`, event.threadID);
-        await setAdminSession(senderID, { state: 'DRAW_KEYS_MAIN' });
-        return;
-      }
-      await setAdminSession(senderID, { state: 'DRAW_KEYS_DELETE', keysList: keys });
-      let msg = `╮───∙⋆⋅「 🗑️ حذف مفتاح رسم 」\nالرجاء كتابة رقم المفتاح المراد حذفه:\n`;
-      keys.forEach((k, idx) => {
-        msg += `│ ${idx + 1}. ${k.key.substring(0, 8)}...${k.key.substring(k.key.length - 4)}\n`;
-      });
-      msg += `╯───────∙⋆⋅ ※ ⋅⋆∙\n› اكتب الرقم أو "خروج" للإلغاء.`;
-      await sendMessage(api, msg, event.threadID);
-      return;
-    }
-    await sendMessage(api, `⚠️ خيار غير صحيح. الرجاء إدخال رقم من 1 إلى 3 أو 《 خروج 》.`, event.threadID);
-    return;
-  }
-
-  if (s === 'DRAW_KEYS_ADD') {
-    if (!text) {
-      await sendMessage(api, `⚠️ الرجاء إدخال مفتاح صالح.`, event.threadID);
-      return;
-    }
-    const exists = await db.collection('drawing_keys').findOne({ key: text });
-    if (exists) {
-      await sendMessage(api, `⚠️ هذا المفتاح مضاف بالفعل مسبقاً!`, event.threadID);
-    } else {
-      await db.collection('drawing_keys').insertOne({ key: text, createdAt: new Date() });
-      await sendMessage(api, `✅ تم إضافة مفتاح الرسم الجديد بنجاح!`, event.threadID);
-    }
-    await deleteAdminSession(senderID);
-    return;
-  }
-
-  if (s === 'DRAW_KEYS_DELETE') {
-    const idx = parseInt(text, 10) - 1;
-    const keysList = session.keysList || [];
-    if (isNaN(idx) || idx < 0 || idx >= keysList.length) {
-      await sendMessage(api, `⚠️ خيار غير صحيح. الرجاء إدخال الرقم المقابل للمفتاح.`, event.threadID);
-      return;
-    }
-    const keyToDelete = keysList[idx];
-    await db.collection('drawing_keys').deleteOne({ _id: keyToDelete._id });
-    await sendMessage(api, `✅ تم حذف المفتاح بنجاح!`, event.threadID);
-    await deleteAdminSession(senderID);
-    return;
-  }
-}
 
 // ═════════════════════════════════════════════════════════════════════
 //   الموجّه الرئيسي لجميع أوامر الأدمن
@@ -414,7 +68,7 @@ async function handleAdminCommand(api, event) {
 
     // توجيه جلسات مفاتيح الرسم للادمن
     if (s.startsWith('DRAW_KEYS_')) {
-      await handleDrawKeysSession(api, event, adminSession);
+      await drawKeys.handleDrawKeysSession(api, event, adminSession);
       return true;
     }
 
@@ -426,57 +80,12 @@ async function handleAdminCommand(api, event) {
 
     // توجيه معالجة الجلسة النشطة لإنشاء مهمة جديدة من قبل الأدمن
     if (s.startsWith('ADMIN_ADD_TASK_')) {
-      const db = require('./database').getDB();
-      if (s === 'ADMIN_ADD_TASK_CHOOSE_RANK') {
-        if (text === '1') {
-          await setAdminSession(senderID, { state: 'ADMIN_ADD_TASK_TITLE', targetRank: 'نائب الامبراطور' });
-          await sendMessage(api, `✉️ يرجى إدخال عنوان المهمة:`, event.threadID);
-        } else {
-          await sendMessage(api, `⚠️ خيار غير صحيح. يرجى إرسال رقم الرتبة المطلوبة (1) أو "خروج" للإلغاء.`, event.threadID);
-        }
-        return true;
-      }
-      if (s === 'ADMIN_ADD_TASK_TITLE') {
-        await setAdminSession(senderID, {
-          state: 'ADMIN_ADD_TASK_DETAILS',
-          targetRank: adminSession.targetRank,
-          taskTitle: text
-        });
-        await sendMessage(api, `📝 يرجى إدخال تفاصيل المهمة:`, event.threadID);
-        return true;
-      }
-      if (s === 'ADMIN_ADD_TASK_DETAILS') {
-        const title = adminSession.taskTitle;
-        const details = text;
-        const targetRank = adminSession.targetRank;
-
-        await db.collection('tasks').insertOne({
-          title,
-          details,
-          targetRank,
-          createdBy: senderID,
-          createdAt: new Date()
-        });
-
-        await deleteAdminSession(senderID);
-        await sendMessage(api, `✅ تم ارسال المهمة للرتبة المحددة`, event.threadID);
-
-        // إشعار كافة نوائب الإمبراطور المسجلين
-        const deputies = await db.collection('players').find({ rank: 'نائب الامبراطور' }).toArray();
-        for (const dep of deputies) {
-          await db.collection('notifications').insertOne({
-            fbId: String(dep.fbId),
-            message: `🔔 مهمة جديدة اكتب " مهام "`,
-            createdAt: new Date(),
-            sent: false
-          });
-        }
-        return true;
-      }
+      await tasks.handleTasksSession(api, event, adminSession);
+      return true;
     }
 
     if (s.startsWith('CMD_MGMT_')) {
-      await handleCommandMgmtSession(api, event, adminSession);
+      await commandMgmt.handleCommandMgmtSession(api, event, adminSession);
       return true;
     }
     if (s === 'DATA_MAIN' || s === 'DATA_AWAIT_NAME' || s === 'DATA_AWAIT_PHOTO' || s === 'DATA_AWAIT_BOT_NICK') { 
@@ -632,74 +241,7 @@ async function handleAdminCommand(api, event) {
   }
 
   // --- أمر التقمص وإلغاء التقمص ---
-  if (text === 'الغاء التقمص' || text === 'إلغاء التقمص') {
-    global.impersonations = global.impersonations || {};
-    const adminId = event.originalSenderID || senderID;
-    if (global.impersonations[adminId]) {
-      delete global.impersonations[adminId];
-      const db = require('./database').getDB();
-      await db.collection('impersonations').deleteOne({ adminId: adminId });
-      await sendMessage(api, `╮───∙⋆⋅「 إلغاء التقمص 」\n│\n│ › ✅ تم إلغاء التقمص بنجاح.\n│ › عدت لهويتك الأصلية كمسؤول.\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.threadID);
-    } else {
-      await sendMessage(api, `⚠️ أنت لا تتقمص دور أي لاعب حالياً.`, event.threadID);
-    }
-    return true;
-  }
-
-  if (text.startsWith('تقمص ')) {
-    const db = require('./database').getDB();
-    const target = text.replace(/^تقمص\s+/, '').trim();
-    if (!target) {
-      await sendMessage(api, `⚠️ يرجى تحديد لقب اللاعب، ايديه، أو رابط حسابه للتقمص.`, event.threadID);
-      return true;
-    }
-    
-    let player = null;
-    if (/^\d+$/.test(target)) {
-      player = await db.collection('players').findOne({ fbId: target });
-    }
-    
-    if (!player && (target.includes('facebook.com') || target.includes('fb.com'))) {
-      const idMatch = target.match(/(?:profile\.php\?id=)?(\d+)/);
-      const extractedId = idMatch ? idMatch[1] : null;
-      if (extractedId) {
-        player = await db.collection('players').findOne({ fbId: extractedId });
-      }
-      if (!player) {
-        player = await db.collection('players').findOne({ link: target });
-      }
-    }
-    
-    if (!player) {
-      player = await db.collection('players').findOne({ 
-        $or: [
-          { name: { $regex: new RegExp(escapeRegex(target), 'i') } },
-          { nickname: { $regex: new RegExp(escapeRegex(target), 'i') } }
-        ]
-      });
-    }
-    
-    global.impersonations = global.impersonations || {};
-    
-    if (player) {
-      global.impersonations[senderID] = player.fbId;
-      await db.collection('impersonations').updateOne(
-        { adminId: senderID },
-        { $set: { targetId: player.fbId, targetName: player.name || player.nickname || player.fbId } },
-        { upsert: true }
-      );
-      await sendMessage(api, `╮───∙⋆⋅「 تقمص 」\n│\n│ › ✅ تم التقمص بنجاح!\n│ › أنت الآن تتقمص دور اللاعب: ${player.name || player.nickname || player.fbId}\n│ › لإلغاء التقمص اكتب: الغاء التقمص\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.threadID);
-    } else if (/^\d+$/.test(target)) {
-      global.impersonations[senderID] = target;
-      await db.collection('impersonations').updateOne(
-        { adminId: senderID },
-        { $set: { targetId: target, targetName: target } },
-        { upsert: true }
-      );
-      await sendMessage(api, `╮───∙⋆⋅「 تقمص 」\n│\n│ › ✅ تم التقمص بنجاح (معرف مباشر)!\n│ › أنت الآن تتقمص دور الايدي: ${target}\n│ › لإلغاء التقمص اكتب: الغاء التقمص\n╯───────∙⋆⋅ ※ ⋅⋆∙`, event.threadID);
-    } else {
-      await sendMessage(api, `❌ لم يتم العثور على اللاعب المطلوب في قاعدة البيانات.`, event.threadID);
-    }
+  if (await impersonation.handleImpersonationCommand(api, event)) {
     return true;
   }
 
@@ -710,43 +252,17 @@ async function handleAdminCommand(api, event) {
   }
 
   if (text === 'اضافة مهام' || text === 'إضافة مهام') {
-    await setAdminSession(senderID, { state: 'ADMIN_ADD_TASK_CHOOSE_RANK' });
-    const msg = 
-      `╮───∙⋆⋅「 📋 إضافة مهمة جديدة 」\n` +
-      `│ الرجاء اختيار رقم الرتبة الإدارية المستهدفة:\n` +
-      `│ 1 》 نائب الامبراطور\n` +
-      `╯───────∙⋆⋅ ※ ⋅⋆∙───────◈\n\n` +
-      `› أرسل رقم الخيار المطلوب أو اكتب 《 خروج 》 للإلغاء.`;
-    await sendMessage(api, msg, event.threadID);
+    await tasks.handleTasksStart(api, event);
     return true;
   }
 
   if (text === 'مفاتيح رسم') {
-    await setAdminSession(senderID, { state: 'DRAW_KEYS_MAIN' });
-    const menuMsg = 
-      `╮───∙⋆⋅「 🎨 إدارة مفاتيح الرسم 」\n` +
-      `│ 1 》 عرض المفاتيح الحالية\n` +
-      `│ 2 》 إضافة مفتاح جديد\n` +
-      `│ 3 》 حذف مفتاح\n` +
-      `╯───────∙⋆⋅ ※ ⋅⋆∙───────◈\n\n` +
-      `› أرسل رقم الخيار المطلوب أو اكتب 《 خروج 》 للإلغاء.`;
-    await sendMessage(api, menuMsg, event.threadID);
+    await drawKeys.handleDrawKeysStart(api, event);
     return true;
   }
 
   if (text === 'ضبط الاوامر') {
-    await setAdminSession(senderID, { state: 'CMD_MGMT_MAIN' });
-    const menuMsg = 
-      `╮───∙⋆⋅「 ⚙️ إدارة الأوامر 」\n` +
-      `│ 1 》 إضافة أمر جديد\n` +
-      `│ 2 》 تعديل أمر موجود\n` +
-      `│ 3 》 حذف أمر\n` +
-      `│ 4 》 تغيير ترتيب الأوامر\n` +
-      `│ 5 》 عرض الأوامر كاملة\n` +
-      `│ 6 》 إعادة ضبط للوضع الافتراضي\n` +
-      `╯───────∙⋆⋅ ※ ⋅⋆∙───────◈\n\n` +
-      `› أرسل رقم الخيار المطلوب أو اكتب 《 خروج 》 للإلغاء.`;
-    await sendMessage(api, menuMsg, event.threadID);
+    await commandMgmt.handleCommandMgmtStart(api, event);
     return true;
   }
 
@@ -766,7 +282,7 @@ async function handleAdminCommand(api, event) {
     return true; 
   }
 
-  if (text === 'لوحة التحكم')    { await handleAdminMenu(api, event);         return true; }
+  if (text === 'لوحة التحكم')    { await menu.handleAdminMenu(api, event);      return true; }
   if (text === 'بيانات')          { await database.handleBayaanat(api, event);   return true; }
   if (text === 'تعديل')           { await groups.handleTa3deel(api, event);     return true; }
   if (text === 'معلومات')         { await moderation.handleMa3loomat(api, event, ''); return true; }
@@ -876,49 +392,18 @@ async function handleAdminCommand(api, event) {
   return false;
 }
 
-// اعتراض ومعالجة نظام التقمص لجميع رسائل الأحداث الواردة
-function handleImpersonationInterceptor(event) {
-  if (!event || !event.senderID) return;
-  global.impersonations = global.impersonations || {};
-  
-  const text = (event.body || '').trim();
-  if (text === 'الغاء التقمص' || text === 'إلغاء التقمص') {
-    return; // دع الأمر يمر عبر هويته الأصلية ليتمكن الأدمن من الإلغاء
-  }
-  
-  if (global.impersonations[event.senderID]) {
-    event.originalSenderID = event.senderID; // حفظ الهوية الأصلية احتياطاً
-    event.senderID = global.impersonations[event.senderID]; // تزييف الهوية باللاعب المتقمص
-  }
-}
-
-// دالة البدء مع جلب التقمص المخزن بقاعدة البيانات
-async function initAdminIdsWithImpersonation(api) {
-  await auth.initAdminIds(api);
-  try {
-    const db = require('./database').getDB();
-    const list = await db.collection('impersonations').find({}).toArray();
-    global.impersonations = global.impersonations || {};
-    for (const item of list) {
-      global.impersonations[String(item.adminId)] = String(item.targetId);
-    }
-  } catch (e) {
-    console.error('[Admin Init] Error loading impersonations:', e);
-  }
-}
-
 // التصديرات المتوافقة
 module.exports = {
-  handleAdminGranted,
+  handleAdminGranted: menu.handleAdminGranted,
   handleAdminCommand,
-  handleImpersonationInterceptor,
+  handleImpersonationInterceptor: impersonation.handleImpersonationInterceptor,
   handleProtection: protection.handleProtection,
   handleDisabledCommand: commands.handleDisabledCommand,
   matchCommandKey: commands.matchCommandKey,
   isAdmin: auth.isAdmin,
   kickFromAllGroups: helpers.kickFromAllGroups,
   getPermanentBan,
-  initAdminIds: initAdminIdsWithImpersonation, // تم الترقية لتحميل التقمص
+  initAdminIds: impersonation.initAdminIdsWithImpersonation, // تم الترقية لتحميل التقمص
   initGroupes: auth.initGroupes,
   initBotEnabled: system.initBotEnabled,
   isBotEnabled: system.isBotEnabled,
