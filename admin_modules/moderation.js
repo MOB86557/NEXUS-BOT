@@ -238,57 +238,163 @@ async function showPlayerInfo(api, event, query) {
     threadID);
 }
 
+// أمر بانكاي (طرد عادي) - يدعم المسجل وغير المسجل
 async function handleBayaat(api, event, targetText) {
   const { threadID, senderID } = event;
   if (!targetText && !event.messageReply) {
     await setAdminSession(senderID, { state: 'BAYAAT_TARGET' });
     await sendMessage(api, `╮───∙⋆⋅「 بانكاي 」\n│\n│ › ارسل لقب اللاعب او ايدي او رابط\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID); return;
   }
-  const { player, fbId } = await resolveTarget(targetText, event);
-  if (!fbId) { await sendMessage(api, `⚠️ لم يتم العثور على اللاعب`, threadID); return; }
+
+  let fbId = null;
+  let player = null;
+
+  // جلب الايدي مباشرة في حالة الرد حتى لو كان غير مسجل
+  if (event.messageReply && event.messageReply.senderID) {
+    fbId = String(event.messageReply.senderID);
+    player = await getPlayer(fbId).catch(() => null);
+  } else if (targetText && targetText.trim()) {
+    const { extractFbId } = require('../utils');
+    const extracted = extractFbId(targetText);
+    if (extracted) {
+      fbId = extracted;
+      player = await getPlayer(fbId).catch(() => null);
+    } else {
+      const resolved = await resolveTarget(targetText, event).catch(() => null);
+      if (resolved && resolved.fbId) {
+        fbId = resolved.fbId;
+        player = resolved.player;
+      }
+    }
+  }
+
+  if (!fbId) { 
+    await sendMessage(api, `⚠️ لم يتم العثور على اللاعب`, threadID); 
+    return; 
+  }
+
+  const nickname = player ? player.nickname : `غير مسجل (${fbId})`;
+  const msg = event.messageReply ? `⌯ اللاعب  › ${nickname}\n✧ بلع البانكاي بنجاح 🚮 ✅️` : `✧ بلع البانكاي بنجاح 🚮 ✅️`;
+
+  const { sendImageFromUrl } = require('../utils');
+  
+  // 1. إرسال الصورة أولاً
+  await sendImageFromUrl(api, 'https://i.ibb.co/dJmgk42v/0a9a09af60de.jpg', threadID).catch(() => {});
+  // 2. إرسال الجملة المعتادة
+  await sendMessage(api, msg, threadID);
+  // 3. الطرد من كافة القروبات
   await kickFromAllGroups(api, fbId);
-  const nickname = player ? player.nickname : fbId;
-  await sendMessage(api, event.messageReply ? `⌯ اللاعب  › ${nickname}\n✧ بلع البانكاي بنجاح 🚮 ✅️` : `✧ بلع البانكاي بنجاح 🚮 ✅️`, threadID);
 }
 
+// أمر بانكاي مؤبد (طرد مع حظر دائم) - يدعم المسجل وغير المسجل
 async function handleBayaatMoabad(api, event, targetText) {
   const { threadID, senderID } = event;
   if (!targetText && !event.messageReply) {
     await setAdminSession(senderID, { state: 'BAYAAT_MOABAD_TARGET' });
     await sendMessage(api, `╮───∙⋆⋅「 بانكاي مؤبد 」\n│\n│ › ارسل لقب اللاعب او ايدي او رابط\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID); return;
   }
-  const { player, fbId } = await resolveTarget(targetText, event);
-  if (!fbId) { await sendMessage(api, `⚠️ لم يتم العثور على اللاعب`, threadID); return; }
+
+  let fbId = null;
+  let player = null;
+
+  // جلب الايدي مباشرة في حالة الرد حتى لو كان غير مسجل
+  if (event.messageReply && event.messageReply.senderID) {
+    fbId = String(event.messageReply.senderID);
+    player = await getPlayer(fbId).catch(() => null);
+  } else if (targetText && targetText.trim()) {
+    const { extractFbId } = require('../utils');
+    const extracted = extractFbId(targetText);
+    if (extracted) {
+      fbId = extracted;
+      player = await getPlayer(fbId).catch(() => null);
+    } else {
+      const resolved = await resolveTarget(targetText, event).catch(() => null);
+      if (resolved && resolved.fbId) {
+        fbId = resolved.fbId;
+        player = resolved.player;
+      }
+    }
+  }
+
+  if (!fbId) { 
+    await sendMessage(api, `⚠️ لم يتم العثور على اللاعب`, threadID); 
+    return; 
+  }
+
   const nickname = player ? player.nickname : fbId;
+  const msg = event.messageReply 
+    ? `⌯ اللاعب  › ${nickname}\n✧ بلع البانكاي بنجاح 🚮 ✅️\n⌯ الحظر › مؤبد 🔒` 
+    : `✧ بلع البانكاي بنجاح 🚮 ✅️\n⌯ الحظر › مؤبد 🔒`;
+
+  // حفظ في قاعدة بيانات الحظر الدائم (إذا كان غير مسجل نعتمد الايدي كلقب)
   await addPermanentBan(fbId, nickname);
+
+  const { sendImageFromUrl } = require('../utils');
+
+  // 1. إرسال الصورة أولاً
+  await sendImageFromUrl(api, 'https://i.ibb.co/dJmgk42v/0a9a09af60de.jpg', threadID).catch(() => {});
+  // 2. إرسال الجملة المعتادة
+  await sendMessage(api, msg, threadID);
+  // 3. الطرد من كافة القروبات
   await kickFromAllGroups(api, fbId);
-  if (player) await deletePlayer(fbId);
-  await sendMessage(api, event.messageReply ? `⌯ اللاعب  › ${nickname}\n✧ بلع البانكاي بنجاح 🚮 ✅️\n⌯ الحظر › مؤبد 🔒` : `✧ بلع البانكاي بنجاح 🚮 ✅️\n⌯ الحظر › مؤبد 🔒`, threadID);
+
+  // حذف الحساب من نظام اللعبة إن كان مسجلاً
+  if (player) {
+    await deletePlayer(fbId);
+  }
 }
 
+// أمر الحذف
 async function handleHadhfAdmin(api, event, targetText) {
   const { threadID, senderID } = event;
   if (!targetText && !event.messageReply) {
     await setAdminSession(senderID, { state: 'HADHF_TARGET' });
     await sendMessage(api, `╮───∙⋆⋅「 حذف لاعب 」\n│\n│ › ارسل لقب اللاعب او ايدي او رابط\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID); return;
   }
-  const { player, fbId } = await resolveTarget(targetText, event);
+
+  let fbId = null;
+  let player = null;
+
+  if (event.messageReply && event.messageReply.senderID) {
+    fbId = String(event.messageReply.senderID);
+    player = await getPlayer(fbId).catch(() => null);
+  } else if (targetText && targetText.trim()) {
+    const { extractFbId } = require('../utils');
+    const extracted = extractFbId(targetText);
+    if (extracted) {
+      fbId = extracted;
+      player = await getPlayer(fbId).catch(() => null);
+    } else {
+      const resolved = await resolveTarget(targetText, event).catch(() => null);
+      if (resolved && resolved.fbId) {
+        fbId = resolved.fbId;
+        player = resolved.player;
+      }
+    }
+  }
+
   if (!fbId || !player) { await sendMessage(api, `⚠️ اللاعب غير موجود في قاعدة البيانات`, threadID); return; }
   await deletePlayer(fbId);
   await sendMessage(api, `╮───∙⋆⋅「 حذف اللاعب 」\n│\n│ › اللاعب : ${player.nickname}\n│ › تم حذف بياناته ✅️\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
 }
 
+// عرض قائمة المحظورين مع إظهار الايدي لغير المسجلين
 async function handleHazar(api, event) {
   const { threadID, senderID } = event;
   const bans = await getAllPermanentBans();
   if (!bans || !bans.length) { await sendMessage(api, `╮───∙⋆⋅「 الحظر 」\n│\n│ › لا يوجد أي شخص محظور\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID); return; }
   let msg = `╮───∙⋆⋅「 المحظورون 」\n│\n`;
-  bans.forEach((b, i) => { msg += `│ ${i + 1}. ${b.nickname}\n`; });
+  bans.forEach((b, i) => { 
+    // إذا كان الحظر للاعب غير مسجل (اللقب يطابق الايدي أو فارغ)، نظهر الايدي بوضوح
+    const displayName = (b.nickname && b.nickname !== b.fbId) ? b.nickname : `ايدي: ${b.fbId}`;
+    msg += `│ ${i + 1}. ${displayName}\n`; 
+  });
   msg += `│\n│ › ارسل رقم اللاعب لإلغاء حظره\n│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`;
   await setAdminSession(senderID, { state: 'HAZAR_LIST', bans: bans.map(b => ({ fbId: b.fbId, nickname: b.nickname })) });
   await sendMessage(api, msg, threadID);
 }
 
+// فك الحظر عن اللاعبين
 async function handleHazarSession(api, event, session) {
   const { threadID, senderID, body } = event;
   const text = (body || '').trim();
@@ -297,7 +403,9 @@ async function handleHazarSession(api, event, session) {
   if (isNaN(idx) || idx < 0 || idx >= bans.length) { await sendMessage(api, `⚠️ رقم غير صحيح`, threadID); return; }
   await removePermanentBan(bans[idx].fbId);
   await deleteAdminSession(senderID);
-  await sendMessage(api, `╮───∙⋆⋅「 إلغاء الحظر 」\n│\n│ › ${bans[idx].nickname}\n│ › تم رفع الحظر ✅️\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+
+  const displayName = (bans[idx].nickname && bans[idx].nickname !== bans[idx].fbId) ? bans[idx].nickname : `ايدي: ${bans[idx].fbId}`;
+  await sendMessage(api, `╮───∙⋆⋅「 إلغاء الحظر 」\n│\n│ › ${displayName}\n│ › تم رفع الحظر ✅️\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
 }
 
 // حماية زوجة الامبراطور: أي شخص يرد على رسالتها (غير الأدمن/الامبراطور) يُضاف له انذار تلقائياً
