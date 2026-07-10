@@ -4,7 +4,7 @@
 //   - admin_modules/ignore_system.js  → التجاهل / فك التجاهل / وضع الصمت الجماعي
 //   - admin_modules/deputy_panel.js   → لوحة تحكم نائب الامبراطور
 //   - admin_modules/rank_change.js    → أمر "تغيير الرتبة"
-// هذا الملف أصبح مجرد موجّه (Router) خفيف يجمع بين الميزات أعلاه.
+//   - admin_modules/promo_codes.js    → نظام الأكواد الترويجية (جديد)
 
 const { handleAdminCommand, isAdmin } = require('./admin');
 const { getAdminSession } = require('./database');
@@ -13,6 +13,7 @@ const { sendReply } = require('./utils');
 const ignoreSystem = require('./admin_modules/ignore_system');
 const deputyPanel = require('./admin_modules/deputy_panel');
 const rankChange = require('./admin_modules/rank_change');
+const promoCodes = require('./admin_modules/promo_codes'); // استدعاء النظام الجديد
 
 // يعالج أوامر الأدمن والإمبراطور والنائب عند المراسلة الخاصة (DM).
 async function handleAdminDM(api, event) {
@@ -78,7 +79,7 @@ async function handleAdminGroup(api, event) {
   return false;
 }
 
-// يعالج جلسة اختيار قروب للإضافة، وجلسة اختيار رتبة، وجلسة إدخال وقت التجاهل
+// يعالج جلسة اختيار قروب للإضافة، وجلسة اختيار رتبة، وجلسة إدخال وقت التجاهل، وجلسة إنشاء كود
 async function handleAdminSessionState(api, event, adminSession) {
   if (adminSession.state === 'AWAITING_IGNORE_DURATION') {
     return await ignoreSystem.handleIgnoreDurationSession(api, event, adminSession);
@@ -90,6 +91,11 @@ async function handleAdminSessionState(api, event, adminSession) {
 
   if (adminSession.state === 'AWAITING_RANK_CHANGE_NUMBER') {
     return await rankChange.handleRankChangeSession(api, event, adminSession);
+  }
+
+  // معالجة جلسات إنشاء كود ترويجي
+  if (adminSession.state.startsWith('AWAITING_CODE_')) {
+    return await promoCodes.handleCreateCodeSession(api, event, adminSession);
   }
 
   return false;
