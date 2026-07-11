@@ -57,10 +57,41 @@ async function getKingdomByThreadIdFull(threadId) {
 }
 
 // توليد الكنية (معدلة لإضافة كرات الإنذار تلقائياً في نهاية اللقب)
-function generateNickname(nickname, rank, playerClass, warnings = 0) {
+// statusFlags: { hospital: bool, ignored: bool } — تضيف 🏥 و/أو 🔇 بنهاية الكنية دون فراغات بينهما
+function generateNickname(nickname, rank, playerClass, warnings = 0, statusFlags = {}) {
   const symbol = classSymbols[playerClass] || '✹';
   const warningBalls = '🔴'.repeat(warnings || 0);
-  return `╮ ⟦ ${nickname} ⟧⤷ ${rank} ⌈${symbol}⌋ ╭${warningBalls}`;
+  let base = `╮ ⟦ ${nickname} ⟧⤷ ${rank} ⌈${symbol}⌋ ╭${warningBalls}`;
+  if (statusFlags && statusFlags.hospital) base += '🏥';
+  if (statusFlags && statusFlags.ignored) base += '🔇';
+  return base;
+}
+
+// الكنية الرسمية الثابتة لأي عضو في قروبات الممالك/المدن غير مسجل بنظام اللعبة
+const UNREGISTERED_NICKNAME = '⟦ غير مسجل ⟧';
+
+// بناء الكنية "الرسمية" الكاملة والحية للاعب اعتماداً على حالته الفعلية بقاعدة البيانات الآن
+// (الرتبة + الفئة + الإنذارات + حالة الإنعاش 🏥 + حالة التجاهل 🔇)
+// يُرجع UNREGISTERED_NICKNAME إن لم يكن مسجلاً، ولا يرمي أي استثناء أبداً
+async function buildOfficialNickname(fbId) {
+  try {
+    const { getPlayer, getDB } = require('./database');
+    const player = await getPlayer(fbId);
+    if (!player) return UNREGISTERED_NICKNAME;
+
+    const now = Date.now();
+    const hospital = !!(player.recoveryUntil && new Date(player.recoveryUntil).getTime() > now);
+
+    let ignored = false;
+    try {
+      const rec = await getDB().collection('ignored_players').findOne({ fbId: String(fbId) });
+      if (rec && rec.until && new Date(rec.until).getTime() > now) ignored = true;
+    } catch (e) {}
+
+    return generateNickname(player.nickname, player.rank || 'مجند', player.class, player.warnings || 0, { hospital, ignored });
+  } catch (e) {
+    return UNREGISTERED_NICKNAME;
+  }
 }
 
 // استخراج الايدي من رابط فيسبوك
@@ -245,6 +276,8 @@ module.exports = {
   getCityByThreadId,
   getKingdomByThreadIdFull,
   generateNickname,
+  buildOfficialNickname,
+  UNREGISTERED_NICKNAME,
   extractFbId,
   extractUsername,
   drawBar,
