@@ -1,7 +1,7 @@
 // admin_modules/ignore_system.js — نظام تجاهل اللاعبين ووضع الصمت الجماعي بالقروبات
 
 const config = require('../config.json');
-const { sendReply } = require('../utils');
+const { sendReply, buildOfficialNickname } = require('../utils');
 const { isAdmin } = require('./auth');
 const { getPlayer, updatePlayer, setAdminSession } = require('../database');
 
@@ -77,17 +77,18 @@ async function checkAndCleanExpiredIgnores(api) {
     const now = new Date();
     const expired = await db.collection('ignored_players').find({ until: { $lt: now } }).toArray();
     for (const exp of expired) {
+      // حذف سجل التجاهل أولاً حتى تُبنى الكنية الرسمية بدون 🔇
+      await db.collection('ignored_players').deleteOne({ fbId: exp.fbId });
       const victimPlayer = await getPlayer(exp.fbId);
       if (victimPlayer) {
-        const dbNickname = victimPlayer.nickname || '';
         const victimGroupId = config.groupes[victimPlayer.kingdom];
         if (victimGroupId) {
           try {
-            await new Promise(resolve => api.changeNickname(dbNickname, victimGroupId, exp.fbId, () => resolve()));
+            const officialNick = await buildOfficialNickname(exp.fbId);
+            await new Promise(resolve => api.changeNickname(officialNick, victimGroupId, exp.fbId, () => resolve()));
           } catch (e) {}
         }
       }
-      await db.collection('ignored_players').deleteOne({ fbId: exp.fbId });
     }
   } catch (e) {
     console.error('[Expired Ignores Cleanup] Error:', e);
@@ -229,13 +230,13 @@ async function executeUnignoreCommand(api, event, operatorId, targetID) {
 
   await db.collection('ignored_players').deleteOne({ fbId: targetID });
 
-  // إرجاع كنيته وحذف إيموجي كتم الصوت
+  // إرجاع كنيته الرسمية الكاملة (رتبة + فئة + إنذارات) وحذف إيموجي الكتم 🔇
   if (targetPlayer) {
-    const dbNickname = targetPlayer.nickname || '';
     const victimGroupId = config.groupes[targetPlayer.kingdom];
     if (victimGroupId) {
       try {
-        await new Promise(resolve => api.changeNickname(dbNickname, victimGroupId, targetID, () => resolve()));
+        const officialNick = await buildOfficialNickname(targetID);
+        await new Promise(resolve => api.changeNickname(officialNick, victimGroupId, targetID, () => resolve()));
       } catch (e) {}
     }
   }
@@ -335,14 +336,14 @@ async function handleIgnoreDurationSession(api, event, adminSession) {
     { upsert: true }
   );
 
-  // تعديل الكنية لإضافة إيموجي الكتم 🔇 في قروب اللاعب
+  // تعديل الكنية للكنية الرسمية الكاملة — سجل التجاهل محفوظ أعلاه فتُضاف 🔇 تلقائياً
+  // مع الحفاظ على الرتبة والفئة والإنذارات وإيموجي الإنعاش 🏥 إن وُجد
   if (victimPlayer) {
-    const dbNickname = victimPlayer.nickname || '';
-    const newChatNickname = `${dbNickname} 🔇`;
     const victimGroupId = config.groupes[victimPlayer.kingdom];
     if (victimGroupId) {
       try {
-        await new Promise(resolve => api.changeNickname(newChatNickname, victimGroupId, targetID, () => resolve()));
+        const officialNick = await buildOfficialNickname(targetID);
+        await new Promise(resolve => api.changeNickname(officialNick, victimGroupId, targetID, () => resolve()));
       } catch (e) {
         console.error('[Ignore Nickname Change] Failed to set nickname:', e);
       }
