@@ -75,6 +75,16 @@ async function handleHijoom(api, event) {
     return;
   }
 
+  // ===== 🚫 منع الهجوم على لاعب من نفس المملكة =====
+  if (attacker.kingdom === target.kingdom) {
+    await sendReply(api,
+      `◆━━━━━▷ ✦ ◁━━━━━◆ \n` +
+      `🚫 | هذا اللاعب من نفس مملكتك لايمكنك الهجوم عليه \n` +
+      `◆━━━━━▷ ✦ ◁━━━━━◆`,
+      messageID, threadID);
+    return;
+  }
+
   // ===== ⛔ فحص حالة إنعاش وموت الهدف ⛔ =====
   const now = Date.now();
   if (target.recoveryUntil && new Date(target.recoveryUntil).getTime() > now) {
@@ -97,8 +107,23 @@ async function handleHijoom(api, event) {
     return;
   }
 
-  // ===== حساب الضرر =====
+  // ===== ⚡ فحص واستهلاك الطاقة =====
   const baseDamage = weapon.damage;
+  const requiredEP = Math.round(baseDamage * 1.6);
+  const attackerEp = attacker.ep ?? 1000;
+
+  if (attackerEp < requiredEP) {
+    await sendReply(api,
+      `┍━━━━[ ❌ فشل الهجوم ]━━━━◊\n` +
+      `┋ 🔋 طاقة غير كافية للقيام بهذا الهجوم!\n` +
+      `┋ ⚡ الطاقة المطلوبة : ${requiredEP}\n` +
+      `┋ 🔋 طاقتك الحالية : ${attackerEp}\n` +
+      `┕━━━━━━━━━━━━━━━━━◊`,
+      messageID, threadID);
+    return;
+  }
+
+  // ===== حساب الضرر =====
   let actualDamage = baseDamage;
 
   const targetBag     = (target.bag || []).map(i => ({ ...i }));
@@ -158,7 +183,13 @@ async function handleHijoom(api, event) {
 
   let revivedByElixir = false;
   let targetUpdates = { bag: finalTargetBag, hp: newHp };
-  let attackerUpdates = { bag: newAttackerBag, weaponAttacksCount };
+  
+  // تحديث بيانات المهاجم بخصم الطاقة المستهلكة
+  let attackerUpdates = { 
+    bag: newAttackerBag, 
+    weaponAttacksCount, 
+    ep: attackerEp - requiredEP 
+  };
 
   if (newHp <= 0) {
     if (target.lifeElixir) {
@@ -251,6 +282,8 @@ async function handleHijoom(api, event) {
     `┍━━━━[ ☢️ هجوم ناجح ]━━━━◊\n` +
     `┋ ⚔️ السلاح المستخدم : ${weapon.name}\n` +
     `┋ 🎯 اللاعب المستهدف : ${target.nickname}\n` +
+    `┋ ⚡ الطاقة المستهلكة : ${requiredEP} EP\n` +
+    `┋ 🔋 طاقتك المتبقية   : ${attackerEp - requiredEP} EP\n` +
     `┋ 💢 الضرر الافتراضي : ${baseDamage}\n` +
     `┋ ☠️ الضرر المحقق    : ${actualDamage}\n` +
     durLine +
@@ -285,27 +318,22 @@ async function handleHijoom(api, event) {
     elixirLine +
     `┕━━━━━━━━━━━━━━━━━━◊`;
 
-  const isSameKingdom = attacker.kingdom === target.kingdom;
+  // إرسال الإشعار للضحية وتنبيه مجموعتها بما أن الهجوم أصبح دائمًا خارجيًا
+  await addNotification(target.fbId, targetNotif);
 
-  if (isSameKingdom) {
-    await addNotification(target.fbId, targetNotif);
-  } else {
-    await addNotification(target.fbId, targetNotif);
+  const targetGroupId = getKingdomGroupId(target.kingdom);
+  if (targetGroupId) {
+    const groupAlert =
+      `◊━━━━━━━━━━━━━━━━━━━◊\n` +
+      `🚨𓊈 ☄تنبيه هجوم خارجي ☄ 𓊉🚨\n` +
+      `◊━━━━━━━━━━━━━━━━━━━◊\n` +
+      `❰ المهاجم 🗡️ ❱ ⟸ ${attacker.nickname}\n` +
+      `❰ مملكته 🏰 ❱  ⟸ ${attackerKingdomAr}\n` +
+      `◊━━━━━━━━━━━━━━━━━━◊\n` +
+      `❰ المستهدف ⊹ ❱ ⟸ ${target.nickname}\n` +
+      `◊━━━━━━━━━━━━━━━━━━◊`;
 
-    const targetGroupId = getKingdomGroupId(target.kingdom);
-    if (targetGroupId) {
-      const groupAlert =
-        `◊━━━━━━━━━━━━━━━━━━━◊\n` +
-        `🚨𓊈 ☄تنبيه هجوم خارجي ☄ 𓊉🚨\n` +
-        `◊━━━━━━━━━━━━━━━━━━━◊\n` +
-        `❰ المهاجم 🗡️ ❱ ⟸ ${attacker.nickname}\n` +
-        `❰ مملكته 🏰 ❱  ⟸ ${attackerKingdomAr}\n` +
-        `◊━━━━━━━━━━━━━━━━━━◊\n` +
-        `❰ المستهدف ⊹ ❱ ⟸ ${target.nickname}\n` +
-        `◊━━━━━━━━━━━━━━━━━━◊`;
-
-      await sendMessage(api, groupAlert, targetGroupId);
-    }
+    await sendMessage(api, groupAlert, targetGroupId);
   }
 }
 
