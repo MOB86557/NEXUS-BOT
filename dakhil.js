@@ -4,7 +4,7 @@
  * ═══════════════════════════════════════════════════════════════════════
  */
 
-const { getPlayer, getPermanentBan, updatePlayer } = require('./database');
+const { getPlayer, getPermanentBan, updatePlayer, getDB } = require('./database');
 const { getKingdomByThreadId, getCityByThreadId, kingdomNamesAr, sendMessage, H } = require('./utils');
 const config = require('./config.json');
 
@@ -52,7 +52,7 @@ function getFormattedDate() {
   return `${d}/${m}/${y}`;
 }
 
-function buildAlertMessage(intruderDisplay, intruderKingdom, adderDisplay) {
+function buildAlertMessage(intruderDisplay, intruderKingdom, adderDisplay, adderWarned) {
   let msg =
     `${H}¤   🚨┃⚠️ تـــنـــبـــيـــه ⚠️┃🚨   ¤\n` +
     `╮━━━━━━━━━━━━━━━━━━╭\n` +
@@ -63,8 +63,26 @@ function buildAlertMessage(intruderDisplay, intruderKingdom, adderDisplay) {
   if (adderDisplay) {
     msg += `✦ من اضافه ↜⟦ ${adderDisplay} ⟧\n`;
   }
+  if (adderWarned) {
+    msg += `✦ الحالة ↜⟦ تلقى المُضيف إنذاراً 🚨 ⟧\n`;
+  }
   msg += `╯━━━━━━━━━━━━━━━━━━━╰`;
   return msg;
+}
+
+// إرسال إشعار دائم لمن أضاف الدخيل، يظهر له لاحقاً عبر نظام الإشعارات (isharat.js)
+async function notifyAdderWarned(adderId, intruderDisplay, intruderKingdomAr) {
+  try {
+    const db = getDB();
+    await db.collection('notifications').insertOne({
+      fbId: String(adderId),
+      message: `⚠️ لقد قمت بإضافة دخيل ⟦ ${intruderDisplay} ⟧ من مملكة ⟦ ${intruderKingdomAr} ⟧ إلى قروب لا يخصه، وتلقيت إنذاراً بسبب ذلك 🚨`,
+      createdAt: new Date(),
+      sent: false
+    });
+  } catch (e) {
+    console.error('فشل إرسال إشعار الإنذار للمُضيف:', e.message);
+  }
 }
 
 function buildWrongCityMessage(nickname, kingdomAr) {
@@ -147,52 +165,48 @@ async function handleIntruderJoin(api, event, botId) {
       }
 
       if (player.kingdom !== groupKingdom) {
-        // زيادة الإنذارات وتحديثها بقاعدة البيانات [3]
-        const currentWarnings = (player.warnings || 0) + 1;
-        await updatePlayer(pidStr, { warnings: currentWarnings });
-
-        // تحديث كنية الدخيل في القروب لإظهار كرات الإنذار [1]
-        try {
-          const { changePlayerNickname } = require('./dukhul');
-          await changePlayerNickname(api, threadID, pidStr, player.nickname, player.rank || 'مجند', player.class, currentWarnings);
-        } catch (nickErr) {
-          console.error('فشل تحديث لقب الدخيل عند الانضمام:', nickErr.message);
-        }
-
         const intruderDisplay = player.nickname;
         const intruderKingdom = kingdomNamesAr[player.kingdom] || player.kingdom;
-        let adderDisplay = 'انضم بنفسه';
+
+        // تحديد من قام بإضافة الدخيل (إن وجد) — هو من يتحمل الإنذار وليس الدخيل
         const authorStr = author ? String(author) : null;
+        let adderDisplay = 'انضم بنفسه';
+        let adderPlayer = null;
         if (authorStr && authorStr !== pidStr) {
+          adderPlayer = await getPlayer(authorStr).catch(() => null);
           const fbName = await getUserName(api, authorStr);
           adderDisplay = fbName || authorStr;
         }
-        await sendMessage(api, buildAlertMessage(intruderDisplay, intruderKingdom, adderDisplay), threadID);
-        const kicked = await kickUser(api, pidStr, threadID);
-        if (kicked) await sendMessage(api, `${H}تم طرد الدخيل بنجاح ✅️ وتلقى إنذاراً جديداً 🚨`, threadID);
 
-      } else if (cityDoc) {
-        const playerCity = player.registeredCityName || null;
-        const playerRegThread = player.registeredThreadId || null;
-        const isCapital = !playerCity;
-        const isThisCity = playerRegThread === String(threadID);
-
-        if (!isCapital && !isThisCity) {
-          // زيادة الإنذارات وتحديثها بقاعدة البيانات للمدينة الخاطئة [3]
-          const currentWarnings = (player.warnings || 0) + 1;
-          await updatePlayer(pidStr, { warnings: currentWarnings });
-
-          // تحديث كنية اللاعب في القروب لإظهار كرات الإنذار [1]
+        // إذا كان المُضيف لاعباً مسجلاً (وليس أدمن مُعفى)، يتلقى هو الإنذار والإشعار
+        let adderWarned = false;
+        if (adderPlayer && !checkIsAdmin(authorStr)) {
+          const adderWarnings = (adderPlayer.warnings || 0) + 1;
+          await updatePlayer(authorStr, { warnings: adderWarnings });
           try {
             const { changePlayerNickname } = require('./dukhul');
-            await changePlayerNickname(api, threadID, pidStr, player.nickname, player.rank || 'مجند', player.class, currentWarnings);
+            await changePlayerNickname(api, threadID, authorStr, adderPlayer.nickname, adderPlayer.rank || 'مجند', adderPlayer.class, adderWarnings);
           } catch (nickErr) {
-            console.error('فشل تحديث لقب اللاعب في المدينة الخاطئة:', nickErr.message);
+            console.error('فشل تحديث لقب المُضيف بعد الإنذار:', nickErr.message);
           }
+          await notifyAdderWarned(authorStr, intruderDisplay, intruderKingdom);
+          adderWarned = true;
+        }
 
+        await sendMessage(api, buildAlertMessage(intruderDisplay, intruderKingdom, adderDisplay, adderWarned), threadID);
+        const kicked = await kickUser(api, pidStr, threadID);
+        if (kicked) await sendMessage(api, `${H}تم طرد الدخيل بنجاح ✅️`, threadID);
+
+      } else if (cityDoc) {
+        const playerRegThread = player.registeredThreadId || null;
+        const isThisCity = playerRegThread === String(threadID);
+
+        // أي لاعب — سواء من العاصمة (بلا مدينة مسجلة) أو من مدينة أخرى —
+        // لا يُسمح له بدخول قروب مدينة غير مدينته المسجلة (طرد بدون إنذار)
+        if (!isThisCity) {
           await sendMessage(api, buildWrongCityMessage(player.nickname, kingdomNamesAr[groupKingdom]), threadID);
           const kicked = await kickUser(api, pidStr, threadID);
-          if (kicked) await sendMessage(api, `${H}تم طرد اللاعب من المدينة ✅️ وتلقى إنذاراً جديداً 🚨`, threadID);
+          if (kicked) await sendMessage(api, `${H}تم طرد اللاعب من المدينة ✅️`, threadID);
         }
       }
     } else {
@@ -221,48 +235,25 @@ async function handleIntruderMessage(api, event, player, groupKingdom) {
   }
 
   if (player.kingdom !== groupKingdom) {
-    // زيادة الإنذارات وتحديثها بقاعدة البيانات [3]
-    const currentWarnings = (player.warnings || 0) + 1;
-    await updatePlayer(String(senderID), { warnings: currentWarnings });
-
-    // تحديث كنية الدخيل في القروب لإظهار كرات الإنذار [1]
-    try {
-      const { changePlayerNickname } = require('./dukhul');
-      await changePlayerNickname(api, threadID, String(senderID), player.nickname, player.rank || 'مجند', player.class, currentWarnings);
-    } catch (nickErr) {
-      console.error('فشل تحديث لقب الدخيل عند التفاعل بالرسائل:', nickErr.message);
-    }
-
+    // لا يتلقى الدخيل نفسه إنذاراً هنا؛ لم يعُد بالإمكان تحديد من أضافه في هذه المرحلة (رسالة لاحقة وليست انضمام)
     const intruderDisplay = player.nickname;
     const intruderKingdom = kingdomNamesAr[player.kingdom] || player.kingdom;
     await sendMessage(api, buildAlertMessage(intruderDisplay, intruderKingdom, null), threadID);
     const kicked = await kickUser(api, String(senderID), threadID);
-    if (kicked) await sendMessage(api, `${H}تم طرد الدخيل بنجاح ✅️ وتلقى إنذاراً جديداً 🚨`, threadID);
+    if (kicked) await sendMessage(api, `${H}تم طرد الدخيل بنجاح ✅️`, threadID);
     return true;
   }
 
   const cityDoc = await getCityByThreadId(threadID);
   if (cityDoc) {
     const playerRegThread = player.registeredThreadId || null;
-    const playerCity = player.registeredCityName || null;
-    const isCapital = !playerCity;
     const isThisCity = playerRegThread === String(threadID);
-    if (!isCapital && !isThisCity) {
-      // زيادة الإنذارات وتحديثها بقاعدة البيانات للمدينة الخاطئة [3]
-      const currentWarnings = (player.warnings || 0) + 1;
-      await updatePlayer(String(senderID), { warnings: currentWarnings });
-
-      // تحديث كنية اللاعب في القروب لإظهار كرات الإنذار [1]
-      try {
-        const { changePlayerNickname } = require('./dukhul');
-        await changePlayerNickname(api, threadID, String(senderID), player.nickname, player.rank || 'مجند', player.class, currentWarnings);
-      } catch (nickErr) {
-        console.error('فشل تحديث لقب اللاعب في المدينة الخاطئة (رسائل):', nickErr.message);
-      }
-
+    // أي لاعب — سواء من العاصمة (بلا مدينة مسجلة) أو من مدينة أخرى —
+    // لا يُسمح له بالتفاعل في قروب مدينة غير مدينته المسجلة (طرد بدون إنذار)
+    if (!isThisCity) {
       await sendMessage(api, buildWrongCityMessage(player.nickname, kingdomNamesAr[groupKingdom]), threadID);
       const kicked = await kickUser(api, String(senderID), threadID);
-      if (kicked) await sendMessage(api, `${H}تم طرد اللاعب من المدينة ✅️ وتلقى إنذاراً جديداً 🚨`, threadID);
+      if (kicked) await sendMessage(api, `${H}تم طرد اللاعب من المدينة ✅️`, threadID);
       return true;
     }
   }
