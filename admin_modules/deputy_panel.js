@@ -1,4 +1,4 @@
-// admin_modules/deputy_panel.js — لوحة تحكم نائب الامبراطور (بانكاي، معلومات، عقوبة، تجاهل، اضافة، مهام)
+// admin_modules/deputy_panel.js — لوحة تحكم نائب الامبراطور (بانكاي، معلومات، عقوبة، تجاهل، اضافة، مهام، رتب الادارة)
 
 const config = require('../config.json');
 const { sendReply, kingdomNamesAr } = require('../utils');
@@ -8,7 +8,7 @@ const { getPlayer, updatePlayer, setAdminSession, deleteAdminSession, getDB } = 
 const { notifyAdmins } = require('../musa3idat');
 const { checkMutedGroupMessage, checkAndCleanExpiredIgnores } = require('./ignore_system');
 
-// يعالج أوامر لوحة تحكم نائب الامبراطور (لوحة التحكم، بانكاي، معلومات، عقوبة، تجاهل، فك التجاهل، اضافة، مهام)
+// يعالج أوامر لوحة تحكم نائب الامبراطور (لوحة التحكم، بانكاي، معلومات، عقوبة، تجاهل، فك التجاهل، اضافة، مهام، رتب الادارة)
 async function handleDeputyEmperorCommands(api, event, player) {
   const { senderID, threadID } = event;
   const text = (event.body || '').trim();
@@ -35,6 +35,7 @@ async function handleDeputyEmperorCommands(api, event, player) {
       `❖ عقوبة 《اضافة انذار للاعب 》\n` +
       `❖ تجاهل / فك التجاهل 《 التحكم في تجاهل اللاعبين 》\n` +
       `❖ اضافة 《 اضافتك لقروبات النظام 》\n` +
+      `❖ رتب الادارة 《 تفاصيل الرتب الادارية للممالك 》\n` +
       (isDeputy ? `❖ مهام 《المهام الواجب تنفيذها 》` : ``);
     await sendReply(api, panelMsg, event.messageID, threadID);
     return true;
@@ -187,6 +188,13 @@ async function handleDeputyEmperorCommands(api, event, player) {
     tasksMsg += `╯───────∙⋆⋅ ※ ⋅⋆∙`;
 
     await sendReply(api, tasksMsg, event.messageID, threadID);
+    return true;
+  }
+
+  // --- أمر رتب الإدارة (تفاصيل الرتب الادارية للممالك) ---
+  if (text === 'رتب الادارة' || text === 'رتب الإدارة') {
+    const { handleRanksAlIdarah } = require('../ranks');
+    await handleRanksAlIdarah(api, event);
     return true;
   }
 
