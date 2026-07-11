@@ -1,9 +1,38 @@
 const fs = require('fs');
 const path = require('path');
 const config = require('../config.json');
-const { sendMessage, kingdomNamesAr, generateNickname } = require('../utils');
+const { sendMessage, kingdomNamesAr, generateNickname, buildOfficialNickname } = require('../utils');
 const { getGroupSetting, updateGroupSetting, getAllPlayers, setAdminSession, deleteAdminSession, getDB } = require('../database');
 const { setTitle, downloadPhoto, addUserToGroup } = require('./helpers');
+
+// ═════════════════════════════════════════════════════════════════════
+//   زمن التأخير بين كل تغيير كنية أثناء "إعادة ضبط الكنيات" (بالميلي ثانية)
+//   افتراضياً 2 ثانية — قابل للتعديل من قبل الأدمن عبر أمر إعادة ضبط
+// ═════════════════════════════════════════════════════════════════════
+let resetNicknameDelayMs = 2000;
+let resetDelayLoaded = false;
+
+async function loadResetDelay() {
+  if (resetDelayLoaded) return;
+  resetDelayLoaded = true;
+  try {
+    const { getBotConfig } = require('../database');
+    if (typeof getBotConfig === 'function') {
+      const val = await getBotConfig('resetNicknameDelay');
+      if (val !== undefined && val !== null && !isNaN(val)) {
+        resetNicknameDelayMs = Math.round(Number(val) * 1000);
+      }
+    }
+  } catch (e) {}
+}
+
+async function saveResetDelay(seconds) {
+  resetNicknameDelayMs = Math.round(seconds * 1000);
+  try {
+    const { setBotConfig } = require('../database');
+    if (typeof setBotConfig === 'function') await setBotConfig('resetNicknameDelay', seconds);
+  } catch (e) {}
+}
 
 async function handleTa3deel(api, event) {
   const { threadID, senderID } = event;
@@ -554,33 +583,94 @@ async function handleBotGroupsSession(api, event, session) {
 //   إعادة ضبط النظام الشاملة (دعم الممالك والمدن)
 // ═════════════════════════════════════════════════════════════════════
 
+// ═════════════════════════════════════════════════════════════════════
+//   إعادة ضبط — القائمة الرئيسية
+// ═════════════════════════════════════════════════════════════════════
+
 async function handleEadatDabt(api, event) {
-  const { threadID } = event;
-  await sendMessage(api, `╮───∙⋆⋅「 إعادة ضبط 」\n│\n│ › جارِ إعادة ضبط الكنيات والمدن وأسماء وصور القروبات...\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
-  const players = await getAllPlayers();
-  let done = 0;
-  for (const p of players) {
-    const groupId = config.groupes[p.kingdom]; if (!groupId) continue;
-    try { const nn = generateNickname(p.nickname, p.rank || 'مجند', p.class, p.warnings || 0); await new Promise(r => api.changeNickname(nn, groupId, String(p.fbId), () => r())); done++; } catch (e) {}
-  }
-  const botNickSetting = await getGroupSetting('bot_global');
-  const defaultBotNick = botNickSetting && botNickSetting.botNickname ? botNickSetting.botNickname : null;
-  if (defaultBotNick) {
-    const botId = api.getCurrentUserID ? (typeof api.getCurrentUserID === 'function' ? api.getCurrentUserID() : api.getCurrentUserID) : null;
-    if (botId) {
-      for (const gid of Object.values(config.groupes).filter(Boolean)) {
-        try { await new Promise(r => api.changeNickname(defaultBotNick, String(gid), String(botId), () => r())); } catch(e) {}
-      }
+  const { threadID, senderID } = event;
+  await loadResetDelay();
+  const delaySec = resetNicknameDelayMs / 1000;
+  await setAdminSession(senderID, { state: 'EADATDABT_MAIN' });
+  await sendMessage(api,
+    `╮───────∙⋆⋅ ※ ⋅⋆∙───────╭\n         ✦ إعادة ضبط ✦\n╯───────∙⋆⋅ ※ ⋅⋆∙───────╰\n\n` +
+    `╮───∙⋆⋅「 الخيارات 」\n` +
+    `│ 1 › إعادة ضبط صور القروبات (الممالك والمدن)\n` +
+    `│ 2 › إعادة ضبط أسماء القروبات (الممالك والمدن)\n` +
+    `│ 3 › إعادة ضبط الكنيات (اللاعبين + كنية البوت)\n` +
+    `│ 4 › إعادة ضبط الكل\n` +
+    `│ 5 › تغيير زمن التأخير ⟦ الحالي : ${delaySec}ث ⟧\n` +
+    `│ 6 › خروج\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
+    threadID);
+}
+
+async function handleEadatDabtSession(api, event, session) {
+  const { threadID, senderID, body } = event;
+  const text = (body || '').trim();
+
+  if (session.state === 'EADATDABT_MAIN') {
+    if (text === 'خروج' || text === '6') {
+      await deleteAdminSession(senderID);
+      await sendMessage(api, `╮───∙⋆⋅「 تم الخروج 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      return;
     }
+    if (text === '1') { await deleteAdminSession(senderID); await handleEadatDabtPhotos(api, event); return; }
+    if (text === '2') { await deleteAdminSession(senderID); await handleEadatDabtNames(api, event); return; }
+    if (text === '3') { await deleteAdminSession(senderID); await handleEadatDabtNicknames(api, event); return; }
+    if (text === '4') {
+      await deleteAdminSession(senderID);
+      await handleEadatDabtPhotos(api, event);
+      await handleEadatDabtNames(api, event);
+      await handleEadatDabtNicknames(api, event);
+      await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط الشاملة بالكامل ✅ 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      return;
+    }
+    if (text === '5') {
+      await loadResetDelay();
+      await setAdminSession(senderID, { state: 'EADATDABT_DELAY' });
+      await sendMessage(api,
+        `╮───∙⋆⋅「 تغيير زمن التأخير 」\n│\n` +
+        `│ › الحالي : ${resetNicknameDelayMs / 1000}ث\n│\n` +
+        `│ › ارسل عدد الثواني الجديد بين كل تغيير كنية (رقم أكبر من 0)\n` +
+        `│ › او 《 خروج 》\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
+        threadID);
+      return;
+    }
+    await sendMessage(api, `⚠️ اختر رقماً من 1 إلى 6`, threadID);
+    return;
   }
 
-  // إعادة ضبط العواصم الثلاثة
+  if (session.state === 'EADATDABT_DELAY') {
+    if (text === 'خروج') {
+      await deleteAdminSession(senderID);
+      await sendMessage(api, `╮───∙⋆⋅「 تم الخروج 」\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+      return;
+    }
+    const seconds = parseFloat(text);
+    if (isNaN(seconds) || seconds <= 0) {
+      await sendMessage(api, `⚠️ الرجاء إدخال رقم صحيح أكبر من 0 (بالثواني) أو 《 خروج 》`, threadID);
+      return;
+    }
+    await saveResetDelay(seconds);
+    await deleteAdminSession(senderID);
+    await sendMessage(api,
+      `╮───∙⋆⋅「 تم التعديل ✅️ 」\n│\n│ › زمن التأخير الجديد بين كل تغيير كنية : ${seconds}ث\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
+      threadID);
+    return;
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//   إعادة ضبط الصور (العواصم الثلاثة + كافة المدن)
+// ═════════════════════════════════════════════════════════════════════
+
+async function handleEadatDabtPhotos(api, event) {
+  const { threadID } = event;
+  await sendMessage(api, `╮───∙⋆⋅「 إعادة ضبط الصور 」\n│\n│ › جارِ إعادة ضبط صور القروبات...\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+
   for (const k of ['solfare', 'niravil', 'murdak']) {
     const setting = await getGroupSetting(k);
-    const defaultName = (setting && setting.defaultName) ? setting.defaultName : `مملكة ${kingdomNamesAr[k]}`;
-    await updateGroupSetting(k, { customName: defaultName });
     const gid = config.groupes[k];
-    if (gid) { try { await setTitle(api, defaultName, gid); } catch (e) {} }
     if (gid && setting && (setting.photoBase64 || setting.defaultPhotoUrl || setting.photoUrl)) {
       try {
         const tmp = path.join(require('os').tmpdir(), `reset_${k}_${Date.now()}.jpg`);
@@ -599,35 +689,150 @@ async function handleEadatDabt(api, event) {
     }
   }
 
-  // إعادة ضبط مدن الممالك (المدن) تلقائياً
   try {
     const cities = await getDB().collection('cities').find().toArray();
     for (const city of cities) {
-      if (city.threadId) {
-        try { await setTitle(api, city.name, city.threadId); } catch(e) {}
-        if (city.photoBase64 || city.photoUrl) {
-          try {
-            const tmp = path.join(require('os').tmpdir(), `reset_city_${city.threadId}_${Date.now()}.jpg`);
-            let downloaded = false;
-            if (city.photoBase64) {
-              fs.writeFileSync(tmp, Buffer.from(city.photoBase64, 'base64'));
-              downloaded = true;
-            } else if (city.photoUrl) {
-              await downloadPhoto(city.photoUrl, tmp);
-              downloaded = true;
-            }
-            if (downloaded) {
-              await new Promise(r => api.changeGroupImage(fs.createReadStream(tmp), city.threadId, () => { try { fs.unlinkSync(tmp); } catch (_) {} r(); }));
-            } else { try { fs.unlinkSync(tmp); } catch (_) {} }
-          } catch(e) {}
-        }
+      if (city.threadId && (city.photoBase64 || city.photoUrl)) {
+        try {
+          const tmp = path.join(require('os').tmpdir(), `reset_city_${city.threadId}_${Date.now()}.jpg`);
+          let downloaded = false;
+          if (city.photoBase64) {
+            fs.writeFileSync(tmp, Buffer.from(city.photoBase64, 'base64'));
+            downloaded = true;
+          } else if (city.photoUrl) {
+            await downloadPhoto(city.photoUrl, tmp);
+            downloaded = true;
+          }
+          if (downloaded) {
+            await new Promise(r => api.changeGroupImage(fs.createReadStream(tmp), city.threadId, () => { try { fs.unlinkSync(tmp); } catch (_) {} r(); }));
+          } else { try { fs.unlinkSync(tmp); } catch (_) {} }
+        } catch (e) {}
       }
     }
-  } catch(e) {
-    console.error('Error resetting cities:', e.message);
+  } catch (e) {
+    console.error('Error resetting cities photos:', e.message);
   }
 
-  await sendMessage(api, `╮───∙⋆⋅「 تم إعادة الضبط الشاملة 」\n│\n│ › كنيات الممالك مُعادة : ${done}\n│ › أسماء وصور قروبات العواصم : تمت إعادتها ✅\n│ › أسماء وصور قروبات مدن الممالك : تمت إعادتها ✅\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+  await sendMessage(api, `╮───∙⋆⋅「 تم إعادة ضبط الصور ✅ 」\n│\n│ › صور قروبات العواصم والمدن أُعيدت بنجاح\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//   إعادة ضبط الأسماء (العواصم الثلاثة + كافة المدن)
+// ═════════════════════════════════════════════════════════════════════
+
+async function handleEadatDabtNames(api, event) {
+  const { threadID } = event;
+  await sendMessage(api, `╮───∙⋆⋅「 إعادة ضبط الأسماء 」\n│\n│ › جارِ إعادة ضبط أسماء القروبات...\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+
+  for (const k of ['solfare', 'niravil', 'murdak']) {
+    const setting = await getGroupSetting(k);
+    const defaultName = (setting && setting.defaultName) ? setting.defaultName : `مملكة ${kingdomNamesAr[k]}`;
+    await updateGroupSetting(k, { customName: defaultName });
+    const gid = config.groupes[k];
+    if (gid) { try { await setTitle(api, defaultName, gid); } catch (e) {} }
+  }
+
+  try {
+    const cities = await getDB().collection('cities').find().toArray();
+    for (const city of cities) {
+      if (city.threadId) { try { await setTitle(api, city.name, city.threadId); } catch (e) {} }
+    }
+  } catch (e) {
+    console.error('Error resetting cities names:', e.message);
+  }
+
+  await sendMessage(api, `╮───∙⋆⋅「 تم إعادة ضبط الأسماء ✅ 」\n│\n│ › أسماء قروبات العواصم والمدن أُعيدت بنجاح\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID);
+}
+
+// ═════════════════════════════════════════════════════════════════════
+//   إعادة ضبط الكنيات — كنية البوت + كنيات كل الأعضاء (مسجلين وغير مسجلين)
+//   الترتيب: مورداك (العاصمة) ثم مدنها، ثم سولفارا وعاصمتها ومدنها، ثم نيرافيل
+//   مع تأخير قابل للتعديل بين كل تغيير كنية لتجنب حظر فيسبوك للتغيير المتكرر
+// ═════════════════════════════════════════════════════════════════════
+
+// إعادة ضبط كنيات كافة أعضاء قروب واحد (بالواحد تلو الآخر مع تأخير)
+async function resetGroupMemberNicknames(api, threadID) {
+  let info;
+  try {
+    info = await new Promise((resolve, reject) => {
+      api.getThreadInfo(threadID, (err, res) => { if (err) reject(err); else resolve(res); });
+    });
+  } catch (e) {
+    console.error(`[EadatDabt] فشل جلب معلومات القروب ${threadID}:`, e.message || e);
+    return { done: 0, failed: 0 };
+  }
+
+  const participantIDs = (info && info.participantIDs) || [];
+  let done = 0, failed = 0;
+
+  for (const pid of participantIDs) {
+    const fbId = String(pid);
+    try {
+      const officialNick = await buildOfficialNickname(fbId);
+      await new Promise((resolve, reject) => {
+        api.changeNickname(officialNick, threadID, fbId, (err) => { if (err) reject(err); else resolve(); });
+      });
+      done++;
+    } catch (e) {
+      failed++;
+      console.error(`[EadatDabt] فشل تغيير كنية ${fbId} في ${threadID}:`, e.message || e);
+    }
+    await new Promise(r => setTimeout(r, resetNicknameDelayMs));
+  }
+
+  return { done, failed };
+}
+
+async function handleEadatDabtNicknames(api, event) {
+  const { threadID } = event;
+  await loadResetDelay();
+  await sendMessage(api,
+    `╮───∙⋆⋅「 إعادة ضبط الكنيات 」\n│\n│ › جارِ إعادة ضبط كنية البوت...\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
+    threadID);
+
+  // 1. كنية البوت في كافة القروبات (العواصم + المدن)
+  const botNickSetting = await getGroupSetting('bot_global');
+  const defaultBotNick = botNickSetting && botNickSetting.botNickname ? botNickSetting.botNickname : null;
+  if (defaultBotNick) {
+    const botId = api.getCurrentUserID ? (typeof api.getCurrentUserID === 'function' ? api.getCurrentUserID() : api.getCurrentUserID) : null;
+    if (botId) {
+      const allGroupIds = [...Object.values(config.groupes).filter(Boolean)];
+      try {
+        const cities = await getDB().collection('cities').find().toArray();
+        cities.forEach(c => { if (c.threadId) allGroupIds.push(c.threadId); });
+      } catch (e) {}
+      for (const gid of allGroupIds) {
+        try { await new Promise(r => api.changeNickname(defaultBotNick, String(gid), String(botId), () => r())); } catch (e) {}
+      }
+    }
+  }
+
+  // 2. كنيات الأعضاء حسب الترتيب المطلوب: مورداك ← مدنها ← سولفارا ← مدنها ← نيرافيل ← مدنها
+  const order = ['murdak', 'solfare', 'niravil'];
+  let totalDone = 0, totalFailed = 0;
+  const db = getDB();
+
+  for (const k of order) {
+    const capitalId = config.groupes[k];
+    if (capitalId) {
+      await sendMessage(api, `╮───∙⋆⋅「 إعادة ضبط الكنيات 」\n│\n│ › جارِ معالجة عاصمة ${kingdomNamesAr[k]}...\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID).catch(() => {});
+      const res = await resetGroupMemberNicknames(api, String(capitalId));
+      totalDone += res.done; totalFailed += res.failed;
+    }
+
+    let cities = [];
+    try { cities = await db.collection('cities').find({ kingdom: k }).toArray(); } catch (e) {}
+    for (const city of cities) {
+      if (!city.threadId) continue;
+      await sendMessage(api, `╮───∙⋆⋅「 إعادة ضبط الكنيات 」\n│\n│ › جارِ معالجة مدينة ${city.name}...\n╯───────∙⋆⋅ ※ ⋅⋆∙`, threadID).catch(() => {});
+      const res = await resetGroupMemberNicknames(api, String(city.threadId));
+      totalDone += res.done; totalFailed += res.failed;
+    }
+  }
+
+  await sendMessage(api,
+    `╮───∙⋆⋅「 تم إعادة ضبط الكنيات ✅ 」\n│\n│ › تم تعديل ${totalDone} كنية بنجاح\n│ › فشل تعديل ${totalFailed} كنية\n╯───────∙⋆⋅ ※ ⋅⋆∙`,
+    threadID);
 }
 
 async function handleQarobaat(api, event) {
@@ -839,6 +1044,7 @@ module.exports = {
   handleTa3deel,
   handleDataSession,
   handleEadatDabt,
+  handleEadatDabtSession,
   handleQarobaat,
   handleQarobaatSession,
   handleIdafa,
