@@ -302,11 +302,11 @@ async function routeMainCommands(api, event, text, player, kingdom) {
   if (/^حذف\s+.+$/.test(text)) { await handleHadhf(api, event); return true; }
   if (/^ارسال\s+.+\s+الى\s+.+$/.test(text)) { await handleIrsal(api, event); return true; }
 
-  if (text === 'تصنيع') { await handleTasni3Menu(api, event); return true; }
-  if (/^تصنيع\s+(.+)$/.test(text)) { await handleCraftItem(api, event); return true; }
-  if (['أسلحة', 'اسلحة'].includes(text)) { await handleAslihah(api, event); return true; }
-  if (text === 'دروع') { await handleDuru3(api, event); return true; }
-  if (text === 'مواد') { await handleMawad(api, event); return true; }
+  if (text === 'تصنيع') { await handleTasni3Menu(api, event, kingdom); return true; }
+  if (/^تصنيع\s+(.+)$/.test(text)) { await handleCraftItem(api, event, kingdom); return true; }
+  if (['أسلحة', 'اسلحة'].includes(text)) { await handleAslihah(api, event, kingdom); return true; }
+  if (text === 'دروع') { await handleDuru3(api, event, kingdom); return true; }
+  if (text === 'مواد') { await handleMawad(api, event, kingdom); return true; }
 
   if (/^هجوم\s+.+\s+على\s+.+$/.test(text)) { await handleHijoom(api, event); return true; }
   if (text === 'تجهيز الدرع') { await handleTajhizDar3(api, event); return true; }
