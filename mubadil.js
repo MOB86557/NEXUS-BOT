@@ -125,6 +125,7 @@ async function sendAllResourcesPage(api, senderID, threadID, replyToMessageID) {
   });
   msg += `══════════════━\n`;
   msg += `● لشراء أي مورد رد على هذه الرسالة برقمه\n`;
+  msg += `● لشراء عدة موارد دفعة واحدة، رد وضع كل رقم بسطر منفصل (مثال: 2 ثم 3 ثم 4)\n`;
   msg += `● تنبيه: تتغير الأسعار كل 5 دقائق حسب الطلب وندرة المورد وعوامل أخرى.\n`;
   msg += `━════════════════━`;
 
@@ -214,6 +215,40 @@ async function handleMubadilSession(api, event, session) {
 
   if (session.step === 'buy_browsing') {
     const pageResources = session.pageResources || [];
+    const multiLines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    if (multiLines.length > 1) {
+      const selections = [];
+      let invalid = false;
+      for (const line of multiLines) {
+        if (!/^\d+$/.test(line)) { invalid = true; break; }
+        const idx = parseInt(line, 10);
+        if (idx < 1 || idx > pageResources.length) { invalid = true; break; }
+        selections.push(pageResources[idx - 1]);
+      }
+
+      if (invalid || selections.length === 0) {
+        await deleteMubadilSession(String(senderID));
+        return false;
+      }
+
+      let selMsg = `⭗ الموارد المختارة :\n`;
+      selections.forEach((r, i) => {
+        selMsg += `${i + 1}. ${r.name} — ${r.price} كوينز للوحدة\n`;
+      });
+      selMsg += `━════════════════━\n`;
+      selMsg += `🔴 ارسل كمية كل مورد، كل رقم بسطر منفصل وبنفس الترتيب اعلاه\n`;
+      selMsg += `《 الغاء 》للإلغاء`;
+
+      await setMubadilSession(String(senderID), {
+        step: 'await_buy_qty_multi',
+        selections: selections.map(r => ({ name: r.name, price: r.price })),
+        threadID
+      });
+
+      await sendReply(api, selMsg, messageID, threadID);
+      return true;
+    }
 
     let chosen = null;
     if (/^\d+$/.test(text)) {
@@ -285,6 +320,85 @@ async function handleMubadilSession(api, event, session) {
     try {
       await deleteMubadilSession(String(senderID));
       await handleMubadilBuyResource(api, event, session.resourceName, session.qty, session.totalPrice);
+    } finally {
+      processingLock.delete(lockKey);
+    }
+    return true;
+  }
+
+  if (session.step === 'await_buy_qty_multi') {
+    if (text.includes('.') || text.includes(',')) {
+      await sendReply(api, `يجب ان يكون العدد بدون فاصلة ❌️`, messageID, threadID);
+      return true;
+    }
+
+    const selections = session.selections || [];
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    if (lines.length !== selections.length) {
+      await sendReply(api,
+        `يجب ارسال ${selections.length} ${selections.length === 1 ? 'رقم' : 'أرقام'} (كمية كل مورد)، كل رقم بسطر منفصل وبنفس ترتيب الموارد اعلاه\n《 الغاء 》للإلغاء`,
+        messageID, threadID);
+      return true;
+    }
+
+    const quantities = [];
+    for (const line of lines) {
+      if (!/^\d+$/.test(line)) {
+        await deleteMubadilSession(String(senderID));
+        return false;
+      }
+      const qty = parseInt(line, 10);
+      if (isNaN(qty) || qty <= 0) {
+        await deleteMubadilSession(String(senderID));
+        return false;
+      }
+      quantities.push(qty);
+    }
+
+    // دمج الكميات في حال تكرر نفس المورد باكثر من سطر
+    const combined = new Map();
+    selections.forEach((sel, i) => {
+      const qty = quantities[i];
+      if (combined.has(sel.name)) {
+        combined.get(sel.name).qty += qty;
+      } else {
+        combined.set(sel.name, { price: sel.price, qty });
+      }
+    });
+
+    let totalCoins = 0;
+    const items = [];
+    let confirmMsg = `⭗ تأكيد عملية الشراء :\n`;
+    for (const [name, info] of combined.entries()) {
+      const lineTotal = info.price * info.qty;
+      totalCoins += lineTotal;
+      items.push({ name, qty: info.qty, unitPrice: info.price, lineTotal });
+      confirmMsg += `◆ ${name} ×${info.qty} — ${lineTotal} كوينز\n`;
+    }
+    confirmMsg += `━════════════════━\n💰 المجموع الكلي : ${totalCoins} كوينز\n━════════════════━\nارسل 《 تأكيد 》لتأكيد العملية أو 《 الغاء 》للإلغاء`;
+
+    await setMubadilSession(String(senderID), {
+      step: 'confirm_buy_multi',
+      items,
+      totalCoins,
+      threadID
+    });
+
+    await sendReply(api, confirmMsg, messageID, threadID);
+    return true;
+  }
+
+  if (session.step === 'confirm_buy_multi') {
+    if (text !== 'تأكيد' && text !== 'تاكيد') {
+      await deleteMubadilSession(String(senderID));
+      return false;
+    }
+
+    processingLock.add(lockKey);
+    try {
+      await deleteMubadilSession(String(senderID));
+      await handleMubadilBuyMultipleResources(api, event, session.items, session.totalCoins);
     } finally {
       processingLock.delete(lockKey);
     }
@@ -522,6 +636,60 @@ async function handleMubadilBuyResource(api, event, resourceName, qty, agreedTot
   return true;
 }
 
+async function handleMubadilBuyMultipleResources(api, event, items, agreedTotalPrice) {
+  const { threadID, senderID, messageID } = event;
+
+  const player = await getPlayer(senderID);
+  if (!player) {
+    await sendReply(api, `يجب التسجيل اولاً\nارسل 《 تسجيل 》للانضمام`, messageID, threadID);
+    return true;
+  }
+
+  for (const item of items) {
+    const resource = findResourceByName(item.name);
+    if (!resource) {
+      await sendReply(api, `المورد ${item.name} غير متوفر لدى المبادل ❌️`, messageID, threadID);
+      return true;
+    }
+  }
+
+  const totalPrice = (typeof agreedTotalPrice === 'number')
+    ? agreedTotalPrice
+    : items.reduce((sum, it) => sum + (it.unitPrice * it.qty), 0);
+
+  const coins = player.coins || 0;
+  if (coins < totalPrice) {
+    await sendReply(api,
+      `رصيدك غير كافي لإتمام عملية الشراء 🚫\n◆ السعر الإجمالي : ${totalPrice} كوينز\n◆ رصيدك : ${coins} كوينز`,
+      messageID, threadID);
+    return true;
+  }
+
+  const bag = player.bag || [];
+  const capacity = (player.bagLevel || 1) * 5;
+  const newItemsCount = items.filter(it => !bag.find(b => b.name === it.name && b.type === 'resource')).length;
+
+  if (bag.length + newItemsCount > capacity) {
+    await sendReply(api, `حقيبتك لا تتسع لكل هذه الموارد الجديدة ❌️`, messageID, threadID);
+    return true;
+  }
+
+  for (const item of items) {
+    await addItemToBag(String(senderID), item.name, item.qty);
+    await recordMubadilPurchase(item.name, senderID, item.qty);
+  }
+  await updatePlayer(String(senderID), { coins: coins - totalPrice });
+
+  let msg = `✅️ تم الشراء بنجاح\n`;
+  items.forEach(it => {
+    msg += `◆ ${it.name} ×${it.qty} — ${it.lineTotal} كوينز\n`;
+  });
+  msg += `━════════════════━\n💰 السعر الإجمالي : ${totalPrice} كوينز\n◆ رصيدك الحالي : ${coins - totalPrice} كوينز`;
+
+  await sendReply(api, msg, messageID, threadID);
+  return true;
+}
+
 // ===== اختصار "المبادل شراء" / "المبادل بيع" =====
 
 async function handleMubadilShortcut(api, event, action) {
@@ -548,6 +716,7 @@ module.exports = {
   handleMubadil,
   handleMubadilSession,
   handleMubadilBuyResource,
+  handleMubadilBuyMultipleResources,
   handleMubadilShortcut,
   findResourceByName
 };
