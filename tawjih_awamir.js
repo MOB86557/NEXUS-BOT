@@ -30,7 +30,7 @@ const {
   handleHafr, handleJam3, handleSayd, handleHaqiba,
   handleHadhf, handleIrsal
 } = require('./ta3din_ta5zin');
-const { handleTasni3Menu, handleAslihah, handleDuru3, handleMawad, handleCraftItem } = require('./tasni3');
+const { handleTasni3Menu, handleAslihah, handleDuru3, handleMawad, handleCraftItem, handleCraftQuickBuyReply } = require('./tasni3');
 const {
   handleMatjarMaharat, handleBuySkill, handleMySkills,
   handleMySkillsDetailReply, handleActivateSkill
@@ -128,6 +128,10 @@ async function handleNumericReplyCommands(api, event, text) {
     if (repliedBody.includes('الدروع المتاحة')) { await handleArmorEquipReply(api, event, parseInt(text, 10)); return true; }
     if (repliedBody.includes('متجر مهارات')) { await handleMatjarMaharat(api, event, parseInt(text, 10)); return true; }
     if (repliedBody.includes('مهاراتك المملوكة')) { await handleMySkillsDetailReply(api, event, parseInt(text, 10)); return true; }
+    if (repliedBody.includes('فشل التصنيع')) {
+      const craftBuyHandled = await handleCraftQuickBuyReply(api, event);
+      if (craftBuyHandled) return true;
+    }
   }
 
   if (event.messageReply && text) {
