@@ -31,6 +31,10 @@ const {
   handleHadhf, handleIrsal
 } = require('./ta3din_ta5zin');
 const { handleTasni3Menu, handleAslihah, handleDuru3, handleMawad, handleCraftItem } = require('./tasni3');
+const {
+  handleMatjarMaharat, handleBuySkill, handleMySkills,
+  handleMySkillsDetailReply, handleActivateSkill
+} = require('./matjar_maharat');
 
 // يعالج أمر "الأيدي" + الميديا (صور انمي / ميمز) + أمر "قول" (تحويل النص لصوت)
 // يرجع true إذا تمت معالجة الأمر
@@ -122,6 +126,8 @@ async function handleNumericReplyCommands(api, event, text) {
       return true;
     }
     if (repliedBody.includes('الدروع المتاحة')) { await handleArmorEquipReply(api, event, parseInt(text, 10)); return true; }
+    if (repliedBody.includes('متجر مهارات')) { await handleMatjarMaharat(api, event, parseInt(text, 10)); return true; }
+    if (repliedBody.includes('مهاراتك المملوكة')) { await handleMySkillsDetailReply(api, event, parseInt(text, 10)); return true; }
   }
 
   if (event.messageReply && text) {
@@ -203,6 +209,15 @@ async function routeMainCommands(api, event, text, player, kingdom) {
   if (text === 'المبادل') { await handleMubadil(api, event); return true; }
 
   if (['المتجر', 'متجر', 'متجر نيكسوس'].includes(text)) { await handleMatjar(api, event); return true; }
+
+  if (['متجر مهارات', 'متجر المهارات'].includes(text)) { await handleMatjarMaharat(api, event, 1); return true; }
+  if (text === 'مهاراتي') { await handleMySkills(api, event); return true; }
+
+  const buySkillMatch = text.match(/^شراء مهارة\s+(.+)$/);
+  if (buySkillMatch) { await handleBuySkill(api, event, buySkillMatch[1].trim()); return true; }
+
+  const activateSkillMatch = text.match(/^تفعيل مهارة\s+(.+)$/);
+  if (activateSkillMatch) { await handleActivateSkill(api, event, activateSkillMatch[1].trim()); return true; }
 
   const shopMatch = text.match(/^شراء\s+(.+)$/);
   if (shopMatch) { const h = await handleShopBuy(api, event, shopMatch[1].trim()); if (h) return true; }
@@ -287,11 +302,11 @@ async function routeMainCommands(api, event, text, player, kingdom) {
   if (/^حذف\s+.+$/.test(text)) { await handleHadhf(api, event); return true; }
   if (/^ارسال\s+.+\s+الى\s+.+$/.test(text)) { await handleIrsal(api, event); return true; }
 
-  if (text === 'تصنيع') { await handleTasni3Menu(api, event, kingdom); return true; }
-  if (/^تصنيع\s+(.+)$/.test(text)) { await handleCraftItem(api, event, kingdom); return true; }
-  if (['أسلحة', 'اسلحة'].includes(text)) { await handleAslihah(api, event, kingdom); return true; }
-  if (text === 'دروع') { await handleDuru3(api, event, kingdom); return true; }
-  if (text === 'مواد') { await handleMawad(api, event, kingdom); return true; }
+  if (text === 'تصنيع') { await handleTasni3Menu(api, event); return true; }
+  if (/^تصنيع\s+(.+)$/.test(text)) { await handleCraftItem(api, event); return true; }
+  if (['أسلحة', 'اسلحة'].includes(text)) { await handleAslihah(api, event); return true; }
+  if (text === 'دروع') { await handleDuru3(api, event); return true; }
+  if (text === 'مواد') { await handleMawad(api, event); return true; }
 
   if (/^هجوم\s+.+\s+على\s+.+$/.test(text)) { await handleHijoom(api, event); return true; }
   if (text === 'تجهيز الدرع') { await handleTajhizDar3(api, event); return true; }
