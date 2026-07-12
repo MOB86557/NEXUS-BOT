@@ -718,5 +718,6 @@ module.exports = {
   handleMubadilBuyResource,
   handleMubadilBuyMultipleResources,
   handleMubadilShortcut,
-  findResourceByName
+  findResourceByName,
+  calculatePrice // <--- تمت إضافة التصدير هنا بنجاح!
 };
