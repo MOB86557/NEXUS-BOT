@@ -28,8 +28,10 @@ function getConversationTimeout() {
 }
 
 // ===== تنظيف المحادثات المنتهية الصلاحية =====
+let _cleanupInterval = null;
 function startConversationCleanup() {
-  setInterval(async () => {
+  if (_cleanupInterval) { clearInterval(_cleanupInterval); _cleanupInterval = null; }
+  _cleanupInterval = setInterval(async () => {
     try {
       const expired = await expireOldConversations(getConversationTimeout());
       if (expired > 0) console.log(`[ذاكرة] انتهت صلاحية ${expired} محادثة`);
