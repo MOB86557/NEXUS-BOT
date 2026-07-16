@@ -339,11 +339,25 @@ async function handleSubmissionReply(api, event) {
         `⚠️ لاتزيل التفاعل حتى بعد القبول لكي لاتحصل على انذار ويخصم منك الكوينز`;
       await sendReply(api, replyMsg, event.messageID, threadID);
 
-      // إرسال إشعار فوري للأدمن
+      // إرسال إشعار فوري للأدمن والامبراطور
       const adminId = config.adminId || "61575440740189";
-      const adminIds = config.adminIds && Array.isArray(config.adminIds) ? config.adminIds : [adminId];
+      const notifyIds = config.adminIds && Array.isArray(config.adminIds) ? [...config.adminIds] : [];
+      if (!notifyIds.includes(adminId)) notifyIds.unshift(adminId);
 
-      for (const aid of adminIds) {
+      // إضافة الامبراطور إن وُجد في قاعدة البيانات
+      try {
+        const emperors = await db.collection('players').find(
+          { rank: 'الامبراطور' },
+          { projection: { fbId: 1 } }
+        ).toArray();
+        for (const emp of emperors) {
+          if (emp.fbId && !notifyIds.includes(String(emp.fbId))) {
+            notifyIds.push(String(emp.fbId));
+          }
+        }
+      } catch (e) {}
+
+      for (const aid of notifyIds) {
         try {
           await api.sendMessage({ body: `+👥️` }, String(aid));
         } catch (e) {}
