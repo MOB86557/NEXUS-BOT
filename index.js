@@ -198,6 +198,9 @@ const { sendMessage, H } = require('./utils');
 
 let bootReport = [];
 let currentStopListening = null;
+let _bankInterval = null;
+let _recoveryInterval = null;
+let _inactivityInterval = null;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -417,9 +420,12 @@ async function startBot() {
   startWatchdog(botStatus, startBot, stopCurrentListener);
   startKeepalive(api, botStatus);
 
-  setInterval(() => tickBankSystem(api).catch(e => log('ERROR', 'خطأ في tick البنك:', e.message)), 5 * 60 * 1000);
-  setInterval(() => tickRecoverySystem(api).catch(e => log('ERROR', 'خطأ في tick الإنعاش:', e.message)), 2 * 60 * 1000);
-  setInterval(() => tickInactivityCheck(api).catch(e => log('ERROR', 'خطأ في tick الخمول:', e.message)), 24 * 60 * 60 * 1000);
+  if (_bankInterval) { clearInterval(_bankInterval); _bankInterval = null; }
+  if (_recoveryInterval) { clearInterval(_recoveryInterval); _recoveryInterval = null; }
+  if (_inactivityInterval) { clearInterval(_inactivityInterval); _inactivityInterval = null; }
+  _bankInterval = setInterval(() => tickBankSystem(api).catch(e => log('ERROR', 'خطأ في tick البنك:', e.message)), 5 * 60 * 1000);
+  _recoveryInterval = setInterval(() => tickRecoverySystem(api).catch(e => log('ERROR', 'خطأ في tick الإنعاش:', e.message)), 2 * 60 * 1000);
+  _inactivityInterval = setInterval(() => tickInactivityCheck(api).catch(e => log('ERROR', 'خطأ في tick الخمول:', e.message)), 24 * 60 * 60 * 1000);
 
   (async () => {
     await sleep(5000);
