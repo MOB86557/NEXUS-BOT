@@ -5,7 +5,7 @@ let watchdogInterval = null;
 let currentApi = null;
 
 const processedEvents = new Set();
-const DEDUP_MAX = 500;
+const DEDUP_MAX = 200;
 
 function isDuplicate(eventType, messageID) {
   if (!messageID) return false;
